@@ -84,10 +84,10 @@ dsh/                          # 主仓 (superproject, GitHub 私有仓 dsh)
 `make deploy`（本地 Mac 发起）→ `scripts/deploy-remote.sh`：
 
 1. **前置检查**：服务器需有 Node.js（与本地同版本）、pnpm、git、systemd；读 `deploy/hosts`（真实服务器清单，gitignore，仓库只留 `hosts.example`）。
-2. **同步源码**：rsync 主仓（含 submodule 检出内容）到服务器工作目录 `/opt/dsh`，按 pin 的内容整体同步。
+2. **同步源码**：rsync 主仓（含 submodule 检出内容）到服务器工作目录 `$DEPLOY_DIR`（环境变量指定，默认 `/opt/dsh`），按 pin 的内容整体同步。
 3. **服务器侧构建**：随源码同步过去的 `deploy/remote-install.sh` 在服务器上执行：`mkdir -p` 插件目录 → harness `pnpm install --frozen-lockfile` + build → 插件按 pin 从各自仓库构建后经 `dsh plugin --profile dsh add` 装进 `$DSH_HOME/profiles/dsh/node_modules/`（服务器上 `$DSH_HOME=/opt/dsh/.dsh`，**不跨平台拷贝 node_modules**）。
 4. **服务接管**：安装/更新 `dsh.service`（systemd unit）→ `daemon-reload` → `restart`。
-5. **健康检查**：轮询 `http://<server>:3080` 通过才算成功；失败回滚到上一次产物并报错。
+5. **健康检查**：在服务器本机轮询 `curl http://127.0.0.1:3080`（harness 只绑定回环地址）通过才算成功；失败回滚到上一次产物并报错。
 
 要点：
 
@@ -103,7 +103,7 @@ dsh/                          # 主仓 (superproject, GitHub 私有仓 dsh)
 
 1. `release.sh` 校验：工作区干净；每个 submodule 的 pin 与远端对应分支（harness→master，dsh-web→main）上真实存在的 commit 一致（拦截"本地未推送的 commit 被误 pin"）。
 2. 生成快照清单：每个 submodule 的名称、pin commit SHA、可读版本号（优先取 pin commit 所在分支可及的最新 tag，无 tag 则取 `package.json` 的 `version`）。
-3. `git tag v<semver>` → `git push --tags`。
+3. `git tag v<semver>` → `git push origin v<semver>`（只推本次发布 tag）。
 
 ### CI 自动执行
 
