@@ -57,14 +57,16 @@ check_pnpm() {
   expected="$(expected_pnpm "$dir")"
   [ -n "$expected" ] || return 0   # 未声明 packageManager 的仓库跳过校验
   actual="$(actual_pnpm "$dir")"
-  [ "$actual" = "$expected" ]
+  # expected 可能带 +sha512 后缀（corepack use 生成的 hash pin）；pnpm --version
+  # 只输出版本号，比较前把后缀剥掉，避免对 hash pin 误报校验失败。
+  [ "$actual" = "${expected%%+*}" ]
 }
 verify_all_pnpm() {
   local ok=1 d
   for d in harness plugins/*/; do
     [ -f "$d/package.json" ] || continue
     if ! check_pnpm "$d"; then
-      echo "校验失败: ${d%/} 期望 pnpm@$(expected_pnpm "$d")（packageManager 字段），实际解析为 '$(actual_pnpm "$d")'。"
+      echo "校验失败: ${d%/} 期望 pnpm@$(expected_pnpm "$d")（packageManager 字段），实际解析为 '$(actual_pnpm "$d")'。" >&2
       ok=0
     fi
   done
@@ -94,16 +96,17 @@ echo "==> 构建 harness"
 ( cd harness && export CI=true && pnpm install --frozen-lockfile && pnpm build )
 
 # ---------- 4. 各插件：安装依赖 + 构建（服务器平台产物） ----------
-# 有 pnpm-lock.yaml 的仓库用 --frozen-lockfile（dsh-web 是 pnpm workspace，自带 lock）；
-# 无 lock 的插件回退普通 install（与 scripts/setup.sh 相同）。
+# 服务器侧构建硬性要求 --frozen-lockfile（可复现安装）。此处有意比 scripts/setup.sh
+# 更严格：本地开发允许无 lock 的插件跑普通 install，服务器部署一律要求插件仓提交
+# pnpm-lock.yaml，缺失直接失败（不静默降级为 unfrozen install）。
 for d in plugins/*/; do
   [ -f "$d/package.json" ] || continue
   echo "==> 安装插件依赖: $d"
-  if [ -f "$d/pnpm-lock.yaml" ]; then
-    ( cd "$d" && pnpm install --frozen-lockfile )
-  else
-    ( cd "$d" && pnpm install )
+  if [ ! -f "$d/pnpm-lock.yaml" ]; then
+    echo "错误: 插件 ${d%/} 缺少 pnpm-lock.yaml，服务器侧构建要求 --frozen-lockfile 可复现安装。请在插件仓提交 lockfile 后重试。" >&2
+    exit 1
   fi
+  ( cd "$d" && pnpm install --frozen-lockfile )
   # 该插件是 monorepo 或需构建才可挂载时执行其 build
   if node -e 'const fs=require("fs");process.exit(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).scripts?.build?0:1)' "$d/package.json" 2>/dev/null; then
     echo "==> 构建插件: $d"
@@ -116,8 +119,11 @@ done
 # /opt/dsh 根没有 package.json，corepack 会回落 latest。在 $DSH_HOME 放一个只含
 # packageManager 的 package.json 作锚点，钉住 harness 使用的 pnpm 版本，并禁止回落。
 PIN="$(node -p "require('$ROOT/harness/package.json').packageManager")"
+# corepack use 生成的 pin 可能带 +sha512 后缀；版本比较统一只比版本号部分，
+# 防 hash pin 形式（pnpm@x.y.z+sha512.…）在字符串相等比较下失效。
+PIN_NO_HASH="${PIN%%+*}"
 ANCHORED="$(node -p "try{require('$DSH_HOME/package.json').packageManager||''}catch(e){''}" 2>/dev/null || true)"
-if [ "$ANCHORED" != "$PIN" ]; then
+if [ "${ANCHORED%%+*}" != "$PIN_NO_HASH" ]; then
   mkdir -p "$DSH_HOME"
   node -e '
     const fs = require("fs")
@@ -140,7 +146,7 @@ dsh() {
 # corepack enable 只把 shim 放进 node 所在目录，这里确保 /usr/local/bin 下也有
 # 一个能解析出 harness pin 版本的 pnpm（存在且版本正确则不动，幂等）。
 # 无论 plugins/ 下有没有可挂载的 bundle，dsh.service 都要能启动，故放在挂载之前。
-if ! ( cd harness && /usr/local/bin/pnpm --version 2>/dev/null | grep -qxF "${PIN#pnpm@}" ); then
+if ! ( cd harness && /usr/local/bin/pnpm --version 2>/dev/null | grep -qxF "${PIN_NO_HASH#pnpm@}" ); then
   PNPM_SHIM="$(command -v pnpm 2>/dev/null || true)"
   if [ -n "$PNPM_SHIM" ] && ln -sf "$PNPM_SHIM" /usr/local/bin/pnpm; then
     echo "已创建/更新 corepack pnpm shim: /usr/local/bin/pnpm -> $PNPM_SHIM"
