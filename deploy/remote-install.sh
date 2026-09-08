@@ -123,12 +123,14 @@ done
 # dsh plugin 会在 profile 目录里 spawn pnpm，corepack 从该目录向上找 packageManager；
 # $DEPLOY_DIR 根没有 package.json，corepack 会回落 latest。在 $DSH_HOME 放一个只含
 # packageManager 的 package.json 作锚点，钉住 harness 使用的 pnpm 版本，并禁止回落。
-PIN="$(node -p "require('$ROOT/harness/package.json').packageManager")"
+PIN="$(node -p "require('$ROOT/harness/package.json').packageManager || ''")"
 # corepack use 生成的 pin 可能带 +sha512 后缀；版本比较统一只比版本号部分，
 # 防 hash pin 形式（pnpm@x.y.z+sha512.…）在字符串相等比较下失效。
 PIN_NO_HASH="${PIN%%+*}"
 ANCHORED="$(node -p "try{require('$DSH_HOME/package.json').packageManager||''}catch(e){''}" 2>/dev/null || true)"
-if [ "${ANCHORED%%+*}" != "$PIN_NO_HASH" ]; then
+# 缺 packageManager 与前置 pnpm 校验同语义（视为可跳过）：不写锚点、不报错，
+# 避免把 "undefined" 写进 $DSH_HOME/package.json。
+if [ -n "$PIN" ] && [ "${ANCHORED%%+*}" != "$PIN_NO_HASH" ]; then
   mkdir -p "$DSH_HOME"
   node -e '
     const fs = require("fs")
@@ -204,18 +206,23 @@ for d in plugins/*/; do
   for sub in "$d"packages/*/; do
     [ -f "$sub/package.json" ] || continue
     sub_dir="${sub%/}"
+    # 所有子包目录都进入 containment 防护（不限于声明 patch 的子包候选）：
+    # 根包 patch 指向任何子包目录都属退化配置，一律排除，防止漏判挂载。
+    SUBDIRS+=("$ROOT/$sub_dir")
     if node -e '
       const p = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))
       process.exit(p.dsh?.bundle?.patch ? 0 : 1)
     ' "$sub/package.json"; then
       RAW+=("$ROOT/$sub_dir")
-      SUBDIRS+=("$ROOT/$sub_dir")
     fi
   done
 done
 
-# 候选是否可挂载：patch 必须落在自己包目录内，且不落在任何子包候选的目录内。
-own_patch() { # $1: 候选目录；其余: 全部子包候选目录
+# 候选是否可挂载：patch 必须落在自己包目录内，且不落在任何子包目录内（SUBDIRS
+# 为全部 packages/*/ 子包）。dsh-web 根包的 patch 指向
+# packages/dsh-web-all/cordis.patch.yml（子包目录内），因此根包不是可挂载入口
+# ——dsh-web-all 才是，与官方开发文档一致。
+own_patch() { # $1: 候选目录；其余: 全部子包目录
   local dir="$1"
   shift
   node -e '
@@ -251,11 +258,14 @@ done
 }
 
 # 被其他候选依赖的候选（家族成员）不单独挂载——聚合包的 link: 会带出本地构建。
+# 依赖名覆盖 dependencies/peerDependencies/optionalDependencies 三种声明，
+# 只查 dependencies 会漏掉以 peer 形式声明的家族成员。
 DEP_NAMES=""
 for c in "${CANDIDATES[@]}"; do
   DEP_NAMES+="$(node -e "
     const p = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))
-    console.log(Object.keys(p.dependencies ?? {}).join('\n'))
+    const deps = { ...(p.dependencies ?? {}), ...(p.peerDependencies ?? {}), ...(p.optionalDependencies ?? {}) }
+    console.log(Object.keys(deps).join('\n'))
   " "$c/package.json")"
   DEP_NAMES+=$'\n'
 done
