@@ -49,6 +49,10 @@ if [ -n "$DRY_RUN" ]; then
   echo "==> 试运行模式（--dry-run）：只打印将执行的命令，不连接任何主机"
 fi
 
+# 所有 ssh 调用共享同一组选项：BatchMode 禁交互输密码（部署要求密钥认证），
+# ConnectTimeout 防网络挂起无限阻塞（失败须在有限时间内转入回滚）。
+SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10)
+
 # 服务器侧命令统一经 sudo bash -c 以 root 执行（同一 sudo 身份，见文件头）。
 # ssh 带 -t 分配伪终端：sudo 需输密码时可交互输入；免密 sudo 或 root 登录则无提示。
 # POSIX 单引号包裹（' → '\''）转义：任何远程登录 shell（bash/dash）都能原样解析，
@@ -63,10 +67,10 @@ shell_quote() { # $1=命令字符串 → 输出 '...' 包裹的单个 shell 单�
 remote_sudo() { # $1=target；$2=服务器命令（单字符串）
   local t="$1" cmd="$2"
   if [ -n "$DRY_RUN" ]; then
-    echo "  [dry-run] ssh -t ${t} sudo bash -c '${cmd}'"
+    printf '  [dry-run] ssh %s -t %s sudo bash -c %s\n' "${SSH_OPTS[*]}" "$t" "$(shell_quote "$cmd")"
     return 0
   fi
-  ssh -t "$t" "sudo bash -c $(shell_quote "$cmd")"
+  ssh "${SSH_OPTS[@]}" -t "$t" "sudo bash -c $(shell_quote "$cmd")"
 }
 
 # rsync 参数单一来源：dry-run 打印与真实执行不漂移。
@@ -79,25 +83,29 @@ RSYNC_ARGS=(
 
 sync_tree() { # $1=target
   local t="$1"
+  # 命令存单一变量：dry-run 打印与真实执行共用同一份参数，不漂移。
+  local cmd=( rsync "${RSYNC_ARGS[@]}" "$ROOT/" "$t:/opt/dsh/" )
   if [ -n "$DRY_RUN" ]; then
-    printf '  [dry-run] rsync'
-    printf ' %q' "${RSYNC_ARGS[@]}" "$ROOT/" "$t:/opt/dsh/"
+    printf '  [dry-run]'
+    printf ' %q' "${cmd[@]}"
     printf '\n'
     return 0
   fi
-  rsync "${RSYNC_ARGS[@]}" "$ROOT/" "$t:/opt/dsh/"
+  "${cmd[@]}"
 }
 
 # 健康检查：轮询服务器本机 http://127.0.0.1:3080，至多 60s（30 次 × 2s）。
 health_check() { # $1=target
   local t="$1" i
+  local check_cmd="curl -sf http://127.0.0.1:3080 >/dev/null 2>&1"
   echo "==> 健康检查 http://127.0.0.1:3080（服务器本机轮询，至多 60s）"
   for ((i = 1; i <= 30; i++)); do
     if [ -n "$DRY_RUN" ]; then
-      echo "  [dry-run] ssh ${t} curl -sf http://127.0.0.1:3080"
+      printf '  [dry-run] ssh %s %s %s\n' "${SSH_OPTS[*]}" "$t" "$check_cmd"
       return 0
     fi
-    if ssh "$t" "curl -sf http://127.0.0.1:3080 >/dev/null 2>&1"; then
+    # shellcheck disable=SC2029 # 远端命令按设计在服务器侧执行；单源变量保证 dry-run 打印与真实执行一致
+    if ssh "${SSH_OPTS[@]}" "$t" "$check_cmd"; then
       echo "健康检查通过: ${t}"
       return 0
     fi
@@ -114,15 +122,17 @@ health_check() { # $1=target
 rollback_one() { # $1=target
   local t="$1"
   echo "==> 回滚 ${t} 到上一版本快照（/opt/dsh-snapshot）"
+  # 回滚命令存单一变量：dry-run 打印与真实执行同一份内容。
+  local rollback_cmd="rsync -a --delete /opt/dsh-snapshot/ /opt/dsh/ && cp /opt/dsh-snapshot/deploy/dsh.service /etc/systemd/system/dsh.service && systemctl daemon-reload && { systemctl restart dsh || true; }"
   if [ -n "$DRY_RUN" ]; then
-    echo "  [dry-run] ssh -t ${t} sudo bash -c 'rsync -a --delete /opt/dsh-snapshot/ /opt/dsh/ && cp /opt/dsh-snapshot/deploy/dsh.service /etc/systemd/system/dsh.service && systemctl daemon-reload && { systemctl restart dsh || true; }'"
+    remote_sudo "$t" "$rollback_cmd"
     return 0
   fi
-  if ! ssh "$t" "test -d /opt/dsh-snapshot"; then
+  if ! ssh "${SSH_OPTS[@]}" "$t" "test -d /opt/dsh-snapshot"; then
     echo "错误: 服务器无上一版本快照（/opt/dsh-snapshot），无法回滚。请登录 ${t} 检查 /opt/dsh 状态。" >&2
     return 1
   fi
-  if ! remote_sudo "$t" "rsync -a --delete /opt/dsh-snapshot/ /opt/dsh/ && cp /opt/dsh-snapshot/deploy/dsh.service /etc/systemd/system/dsh.service && systemctl daemon-reload && { systemctl restart dsh || true; }"; then
+  if ! remote_sudo "$t" "$rollback_cmd"; then
     echo "错误: 回滚失败（快照恢复或 unit 安装出错）。请登录 ${t} 检查 /opt/dsh 与 systemctl status dsh。" >&2
     return 1
   fi
@@ -130,25 +140,25 @@ rollback_one() { # $1=target
 }
 
 deploy_one() { # $1=target（user@host）
-  local target="$1" install_log
+  local target="$1" install_log install_cmd
   echo "==> 部署到 ${target}（/opt/dsh）"
 
   # ---- 1. 预检：免密 ssh 可达；服务器需有 rsync/curl/systemctl ----
   if [ -n "$DRY_RUN" ]; then
     echo "  [dry-run] 跳过服务器连通性与 rsync/curl/systemctl 预检"
   else
-    ssh -o BatchMode=yes -o ConnectTimeout=10 "$target" "exit 0" || {
+    ssh "${SSH_OPTS[@]}" "$target" "exit 0" || {
       echo "错误: 无法免密 ssh 连接 ${target}（连接失败、主机密钥未确认或密钥未配置）。请确认已 ssh-copy-id 到该服务器。" >&2
       return 1
     }
-    ssh "$target" "command -v rsync >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1" || {
+    ssh "${SSH_OPTS[@]}" "$target" "command -v rsync >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1" || {
       echo "错误: 服务器 ${target} 缺少 rsync、curl 或 systemctl（同步与健康检查需要）。可执行: sudo apt-get install rsync curl" >&2
       return 1
     }
   fi
 
   # ---- 2. 快照上一版本产物（全新机器跳过；spec §4「部署前快照」）----
-  echo "==> 快照上一版本产物（/opt/dsh-snapshot）"
+  # 服务器侧命令按实际分支打印「已快照」或「无上一版本，跳过快照」，本地不再预打印 banner。
   if ! remote_sudo "$target" "if [ ! -d /opt/dsh ]; then echo 无上一版本，跳过快照; else rsync -a --delete /opt/dsh/ /opt/dsh-snapshot/ && echo 已快照: /opt/dsh-snapshot; fi"; then
     echo "错误: 快照失败（/opt/dsh → /opt/dsh-snapshot）。请检查 ${target} 磁盘空间后重试。" >&2
     return 1
@@ -167,11 +177,12 @@ deploy_one() { # $1=target（user@host）
   # 成功时输出最后一行恒为「remote-install 完成」。CI=true 由 remote-install.sh
   # 内部处理，本脚本不绕过。
   echo "==> 服务器侧安装（deploy/remote-install.sh）"
+  install_cmd="sudo bash /opt/dsh/deploy/remote-install.sh"
   if [ -n "$DRY_RUN" ]; then
-    echo "  [dry-run] ssh -t ${target} sudo bash /opt/dsh/deploy/remote-install.sh（校验 exit 0 且最后一行「remote-install 完成」）"
+    printf '  [dry-run] ssh %s -t %s %s（校验 exit 0 且最后一行「remote-install 完成」）\n' "${SSH_OPTS[*]}" "$target" "$install_cmd"
   else
     install_log="$(mktemp "${TMPDIR:-/tmp}/dsh-deploy.XXXXXX")"
-    if ! ssh -t "$target" "sudo bash /opt/dsh/deploy/remote-install.sh" 2>&1 | tr -d '\r' | tee "$install_log"; then
+    if ! ssh "${SSH_OPTS[@]}" -t "$target" "$install_cmd" 2>&1 | tr -d '\r' | tee "$install_log"; then
       echo "错误: remote-install.sh 在 ${target} 执行失败（exit 非 0）。完整输出见本地临时日志 ${install_log}。" >&2
       rollback_one "$target" || true
       return 1
