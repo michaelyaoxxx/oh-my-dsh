@@ -45,7 +45,7 @@ fi
 node -e 'const s=process.versions.node.split(".").map(Number);const ok=(s[0]===22&&s[1]>=19)||s[0]>=24;if(!ok){console.error("错误: Node 版本不满足 ^22.19 || >=24（harness engines），当前 "+process.versions.node);process.exit(1)}'
 
 if ! command -v corepack >/dev/null 2>&1; then
-  echo "错误: 未找到 corepack（随 Node.js 分发）。请安装 Node.js ^22.19 || >=24 后重试。" >&2
+  echo "错误: 未找到 corepack。Node >=25 已不再随发行版分发 corepack，可执行 npm install -g corepack 安装；Node <25 请安装/启用 Node.js ^22.19 || >=24 后重试。" >&2
   exit 1
 fi
 
