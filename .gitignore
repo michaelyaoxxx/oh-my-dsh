@@ -3,3 +3,6 @@
 
 # 真实服务器清单（只提交 hosts.example）
 deploy/hosts
+
+# SDD scratch workspace
+.superpowers/
