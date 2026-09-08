@@ -1,0 +1,19 @@
+[Unit]
+Description=DeepSeek Harness (DSH) Web
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/dsh/harness
+# $DSH_HOME 必须与 remote-install.sh 一致：插件/配置都落 /opt/dsh/.dsh
+Environment=DSH_HOME=/opt/dsh/.dsh
+Environment=NODE_ENV=production
+# 源码运行入口是 harness 根脚本 `pnpm dsh`（harness/node_modules/.bin 下没有 dsh）。
+# pnpm 为 corepack shim：remote-install.sh 已保证 /usr/local/bin/pnpm 存在，
+# corepack 按 harness/package.json 的 packageManager 解析 pin 的 pnpm@11.7.0。
+ExecStart=/usr/local/bin/pnpm --dir /opt/dsh/harness dsh web --no-open
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
