@@ -39,6 +39,14 @@ HOSTS_FILE="${HOSTS_FILE:-deploy/hosts}"
 # 服务器侧所有目标路径都从 DEPLOY_DIR 派生（快照目录取 $DEPLOY_DIR-snapshot）；
 # export 使 deploy/remote-install.sh 能收到同一值（见 install_cmd 的显式传入）。
 DEPLOY_DIR="${DEPLOY_DIR:-/opt/dsh}"
+# 早期校验：该值将进入 rsync 目标、快照路径拼接与服务器侧 sed 模板渲染，
+# 限定安全字符集（字母/数字/._/-），拒绝空白与 |、& 等破坏命令拼接的字符。
+case "$DEPLOY_DIR" in
+  *[!A-Za-z0-9._/-]*)
+    echo "错误: DEPLOY_DIR（${DEPLOY_DIR}）含不支持的字符（仅允许字母/数字/._/-，不能含空白）。请改用安全路径。" >&2
+    exit 1
+    ;;
+esac
 SNAPSHOT_DIR="${DEPLOY_DIR}-snapshot"
 export DEPLOY_DIR
 

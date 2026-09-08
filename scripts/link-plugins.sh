@@ -105,7 +105,7 @@ done
 # 为全部 packages/*/ 子包）。dsh-web 根包的 patch 指向
 # packages/dsh-web-all/cordis.patch.yml（子包目录内），因此根包不是可挂载入口
 # ——dsh-web-all 才是，与官方开发文档一致。
-own_patch() { # $1: 候选目录；其余: 全部子包候选目录
+own_patch() { # $1: 候选目录；其余: 全部子包目录
   local dir="$1"
   shift
   node -e '

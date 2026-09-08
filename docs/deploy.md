@@ -6,7 +6,7 @@
 
 - **本地（发起部署的机器）**：装有 `rsync`、`ssh`；能免密 SSH 登录服务器（密钥认证，先 `ssh-copy-id` 配置好）；已跑过 `make setup`（本地 `harness/` 需已检出，否则部署脚本会拒绝执行）。
 - **服务器（Linux x86-64 + systemd）**：
-  - Node.js `^22.19 || >=24`（23 不满足），并带 corepack（随 Node.js 分发）。**不需要预装 pnpm**：corepack 按各仓库 `packageManager` 字段解析 pin 的 pnpm 版本（以 `harness/package.json` 的 `packageManager` 字段为准），`remote-install.sh` 在服务器侧校验（比较时剥离 `+sha512` 后缀），并在 `/usr/local/bin` 维护 pnpm shim 供 systemd 服务使用。
+  - Node.js `^22.19 || >=24`（23 不满足），并带 corepack（Node <25 随发行版内置；≥25 不再分发，需 `npm install -g corepack`）。**不需要预装 pnpm**：corepack 按各仓库 `packageManager` 字段解析 pin 的 pnpm 版本（以 `harness/package.json` 的 `packageManager` 字段为准），`remote-install.sh` 在服务器侧校验（比较时剥离 `+sha512` 后缀），并在 `/usr/local/bin` 维护 pnpm shim 供 systemd 服务使用。
   - `rsync`、`curl`（同步与健康检查需要）。
 - **部署账号需要免密 sudo**（或部署账号本身是 root）：rsync 经 `--rsync-path='sudo rsync'` 写 `$DEPLOY_DIR`，无伪终端、无法交互输密码。
 - 插件仓必须提交 `pnpm-lock.yaml`：服务器侧构建强制 `--frozen-lockfile` 可复现安装，缺失直接失败。
