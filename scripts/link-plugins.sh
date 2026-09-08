@@ -30,8 +30,16 @@ export DSH_HOME="${DSH_HOME:-$ROOT/.dsh}"
   echo "错误: harness 未构建，先运行 make setup" >&2
   exit 1
 }
-PIN="$(node -p "require('$ROOT/harness/package.json').packageManager")"
-if [ ! -f "$DSH_HOME/package.json" ]; then
+PIN="$(node -p "require('$ROOT/harness/package.json').packageManager || ''")"
+[ -n "$PIN" ] || {
+  echo "错误: harness/package.json 缺少 packageManager 字段，无法确定 pnpm 版本锚点。" >&2
+  exit 1
+}
+# corepack use 生成的 pin 可能带 +sha512 后缀；版本比较统一只比版本号部分。
+PIN_NO_HASH="${PIN%%+*}"
+# 锚点在缺失或版本变化时都重写（harness pin bump 后保持跟随），重复运行幂等。
+ANCHORED="$(node -p "try{require('$DSH_HOME/package.json').packageManager||''}catch(e){''}" 2>/dev/null || true)"
+if [ "${ANCHORED%%+*}" != "$PIN_NO_HASH" ]; then
   mkdir -p "$DSH_HOME"
   node -e '
     const fs = require("fs")
@@ -45,6 +53,8 @@ export COREPACK_DEFAULT_TO_LATEST=0
 
 # dsh CLI 只能从 harness 源码运行（根脚本 `pnpm dsh`，harness/node_modules/.bin 下
 # 没有 dsh）。corepack 在 harness 目录内解析其钉住的 pnpm 版本。
+# CI=true 与 setup.sh 同理：harness 作为 submodule 时其 postinstall（lefthook 安装）
+# 会因公共 config 的 core.worktree 拒绝迁移而失败，按 harness 自带开关跳过 hooks 安装。
 dsh() {
   ( cd "$ROOT/harness" && CI=true pnpm dsh "$@" )
 }
@@ -58,8 +68,15 @@ for d in plugins/*/; do
   # 聚合包经 link: 挂载时 pnpm 不装它的依赖，而 loader 从 profile 目录解析 patch 行
   # 名（如 '@linxin666/dsh-i18n'、'dsh-better-sidebar'）。官方方案是把全家桶链进
   # profiles/node_modules 作解析回退（dsh-web 自带 scripts/link-profile.mjs 写死
-  # ~/.dsh 约定，用 HOME 重定向到本仓的 DSH_HOME；幂等可重跑）。
+  # ~/.dsh 约定，用 HOME 重定向到本仓的 DSH_HOME；幂等可重跑）。该脚本对任何带有
+  # 它的插件仓无条件执行：解析回退链是聚合包可挂载的前提，与候选筛选结果无关。
   if [ -f "$d/scripts/link-profile.mjs" ]; then
+    # HOME 重定向要求 DSH_HOME 形如 <目录>/.dsh（~ 即其父目录），否则静默落错位置。
+    case "$DSH_HOME" in
+      */.dsh) ;;
+      *) echo "错误: DSH_HOME（${DSH_HOME}）不是 <目录>/.dsh 形状，无法用 HOME 重定向 link-profile.mjs 写死的 ~/.dsh 约定。" >&2
+         exit 1 ;;
+    esac
     echo "==> 链接解析回退（$root_dir/scripts/link-profile.mjs → ${DSH_HOME}/profiles/node_modules）"
     HOME="$(dirname "$DSH_HOME")" node "$d/scripts/link-profile.mjs"
   fi
@@ -72,19 +89,22 @@ for d in plugins/*/; do
   for sub in "$d"packages/*/; do
     [ -f "$sub/package.json" ] || continue
     sub_dir="${sub%/}"
+    # 所有子包目录都进入 containment 防护（不限于声明 patch 的子包候选）：
+    # 根包 patch 指向任何子包目录都属退化配置，一律排除，防止漏判挂载。
+    SUBDIRS+=("$ROOT/$sub_dir")
     if node -e '
       const p = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))
       process.exit(p.dsh?.bundle?.patch ? 0 : 1)
     ' "$sub/package.json"; then
       RAW+=("$ROOT/$sub_dir")
-      SUBDIRS+=("$ROOT/$sub_dir")
     fi
   done
 done
 
-# 候选是否可挂载：patch 必须落在自己包目录内，且不落在任何子包候选的目录内。
-# dsh-web 根包的 patch 指向 packages/dsh-web-all/cordis.patch.yml（子包目录内），
-# 因此根包不是可挂载入口——dsh-web-all 才是，与官方开发文档一致。
+# 候选是否可挂载：patch 必须落在自己包目录内，且不落在任何子包目录内（SUBDIRS
+# 为全部 packages/*/ 子包）。dsh-web 根包的 patch 指向
+# packages/dsh-web-all/cordis.patch.yml（子包目录内），因此根包不是可挂载入口
+# ——dsh-web-all 才是，与官方开发文档一致。
 own_patch() { # $1: 候选目录；其余: 全部子包候选目录
   local dir="$1"
   shift
@@ -120,11 +140,14 @@ done
 }
 
 # 被其他候选依赖的候选（家族成员）不单独挂载——聚合包的 link: 会带出本地构建。
+# 依赖名覆盖 dependencies/peerDependencies/optionalDependencies 三种声明，
+# 只查 dependencies 会漏掉以 peer 形式声明的家族成员。
 DEP_NAMES=""
 for c in "${CANDIDATES[@]}"; do
   DEP_NAMES+="$(node -e "
     const p = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))
-    console.log(Object.keys(p.dependencies ?? {}).join('\n'))
+    const deps = { ...(p.dependencies ?? {}), ...(p.peerDependencies ?? {}), ...(p.optionalDependencies ?? {}) }
+    console.log(Object.keys(deps).join('\n'))
   " "$c/package.json")"
   DEP_NAMES+=$'\n'
 done
