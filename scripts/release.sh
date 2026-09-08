@@ -39,22 +39,23 @@ check_pin plugins/dsh-web main
 VERSION="${1:-}"
 [ -z "$VERSION" ] && { echo "用法: make release VERSION=v0.1.0 或 bash scripts/release.sh v0.1.0" >&2; exit 1; }
 case "$VERSION" in v*) ;; *) VERSION="v$VERSION";; esac
-git tag -l "$VERSION" | grep -q . && { echo "tag $VERSION 已存在" >&2; exit 1; }
+git tag -l "$VERSION" | grep -q . && { echo "tag $VERSION 已存在（若上次推送失败：git tag -d $VERSION 后重试）" >&2; exit 1; }
 
 # 4. 快照清单
 SNAPSHOT="$ROOT/RELEASE_NOTES.md"
 echo "# Release $VERSION 快照清单" > "$SNAPSHOT"
 echo "" >> "$SNAPSHOT"
-snapshot_row() { # $1=path $2=name
-  local sub="$1" name="$2" sha ver=""
+snapshot_row() { # $1=path（名称取 basename，与 release.yaml 的 manifest 一致）
+  local sub="$1" name sha ver=""
+  name="$(basename "$1")"
   sha=$(git -C "$sub" rev-parse HEAD)
   # describe 失败且 package.json 无 version 字段时 node -p 会打印 "undefined" 且 exit 0，
   # `|| echo "-"` 兜底不触发；用 || '-' 让兜底在版本缺失时生效。
   ver=$(git -C "$sub" describe --tags --abbrev=0 2>/dev/null || node -p "require('./$sub/package.json').version || '-'" 2>/dev/null || echo "-")
   echo "- $name: \`$sha\` ($ver)" >> "$SNAPSHOT"
 }
-snapshot_row harness deepseek-harness
-snapshot_row plugins/dsh-web dsh-web
+snapshot_row harness
+snapshot_row plugins/dsh-web
 cat "$SNAPSHOT"
 
 # 5. tag + push（RELEASE_NOTES 只作记录，不入库）
