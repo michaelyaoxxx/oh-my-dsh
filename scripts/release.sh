@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# release.sh — 校验 pin → 生成快照清单 → 打 tag → push（发布主仓快照）
+set -euo pipefail
+cd "$(dirname "$0")/.."
+ROOT="$PWD"
+
+# 1. 工作区干净
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  echo "工作区有未提交修改，先提交再发布"
+  exit 1
+fi
+
+# 2. 子模块 pin 与稳定分支一致（防本地未推送 commit 被误 pin）
+check_pin() { # $1=path  $2=stable_branch
+  local sub="$1" branch="$2"
+  local pinned remote
+  pinned=$(git -C "$sub" rev-parse HEAD)
+  if ! git -C "$sub" fetch origin "$branch" >/dev/null 2>&1; then
+    echo "错误: ${sub} fetch origin ${branch} 失败，无法核对 pin。请检查网络后手动执行: git -C ${sub} fetch origin ${branch}" >&2
+    exit 1
+  fi
+  if ! remote=$(git -C "$sub" rev-parse "origin/$branch"); then
+    echo "错误: ${sub} 缺少远端分支 origin/${branch}，无法核对 pin。请确认远端存在该分支并手动执行: git -C ${sub} fetch origin ${branch}" >&2
+    exit 1
+  fi
+  if [ "$pinned" != "$remote" ]; then
+    echo "警告: $sub pin($pinned) 与 $branch($remote) 不一致"
+    echo "如已推送，请先 git submodule update --remote 或显式更新 pin 再发布"; exit 1
+  fi
+}
+check_pin harness master
+check_pin plugins/dsh-web main
+
+# 3. 版本号
+VERSION="${1:-}"
+[ -z "$VERSION" ] && { echo "用法: make release VERSION=v0.1.0 或 bash scripts/release.sh v0.1.0"; exit 1; }
+case "$VERSION" in v*) ;; *) VERSION="v$VERSION";; esac
+git tag -l "$VERSION" | grep -q . && { echo "tag $VERSION 已存在"; exit 1; }
+
+# 4. 快照清单
+SNAPSHOT="$ROOT/RELEASE_NOTES.md"
+echo "# Release $VERSION 快照清单" > "$SNAPSHOT"
+echo "" >> "$SNAPSHOT"
+snapshot_row() { # $1=path $2=name
+  local sub="$1" name="$2" sha ver=""
+  sha=$(git -C "$sub" rev-parse HEAD)
+  ver=$(git -C "$sub" describe --tags --abbrev=0 2>/dev/null || node -p "require('./$sub/package.json').version" 2>/dev/null || echo "-")
+  echo "- $name: \`$sha\` ($ver)" >> "$SNAPSHOT"
+}
+snapshot_row harness deepseek-harness
+snapshot_row plugins/dsh-web dsh-web
+cat "$SNAPSHOT"
+
+# 5. tag + push（RELEASE_NOTES 只作记录，不入库）
+if ! git remote | grep -q .; then
+  echo "错误: 主仓未配置 git remote，无法推送发布 tag（当前为纯本地仓库）。" >&2
+  echo "请先创建远端仓（如 GitHub 私有仓 dsh）并执行: git remote add origin <url>，再重跑本脚本。" >&2
+  echo "注: 本次运行未创建任何 tag、未改动任何文件（快照清单仅打印到 stdout）。" >&2
+  exit 1
+fi
+git tag -a --cleanup=verbatim "$VERSION" -F "$SNAPSHOT"
+git push origin "$VERSION"
+echo "已发布 $VERSION"

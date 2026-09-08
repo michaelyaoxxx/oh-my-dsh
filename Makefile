@@ -16,4 +16,4 @@ deploy: ## 部署到远程服务器（读 deploy/hosts）
 	bash scripts/deploy-remote.sh
 
 release: ## 校验 pin → 打 tag → push（发布快照）
-	bash scripts/release.sh
+	bash scripts/release.sh $(VERSION)
