@@ -246,6 +246,15 @@ valid_target() { # $1=hosts 行
 # ---- 本地预检 ----
 command -v rsync >/dev/null 2>&1 || { echo "错误: 本地未找到 rsync（同步需要）。" >&2; exit 1; }
 command -v ssh >/dev/null 2>&1 || { echo "错误: 本地未找到 ssh（部署需要）。" >&2; exit 1; }
+# submodule 保真检查：deploy 部署的是 pin 快照，任何偏离都拒绝（+ 工作树改动 / - 未初始化 / U 冲突）。
+# 未初始化的空目录会被 rsync 同步上去，remote-install 静默跳过 → 假成功，必须在这里拦下。
+SUB_STATUS="$(git submodule status 2>/dev/null || true)"
+if printf '%s\n' "$SUB_STATUS" | grep -q '^[+-U]'; then
+  echo "错误: submodule 状态偏离 pin 快照，拒绝部署：" >&2
+  printf '%s\n' "$SUB_STATUS" | grep '^[+-U]' | sed 's/^/  /' >&2
+  echo "请先处理 submodule（未初始化则运行 make setup；有改动则提交或还原）后重试。" >&2
+  exit 1
+fi
 [ -f "$HOSTS_FILE" ] || {
   echo "错误: 缺少 ${HOSTS_FILE}（真实服务器清单，已被 gitignore）。请复制 deploy/hosts.example 为 ${HOSTS_FILE} 并填写 user@host。" >&2
   exit 1
@@ -256,6 +265,7 @@ command -v ssh >/dev/null 2>&1 || { echo "错误: 本地未找到 ssh（部署�
 }
 
 # 读 hosts：跳过空行与整行 # 注释；格式违规即报错；任一服务器失败即整体报错退出。
+DEPLOYED=0
 while IFS= read -r line; do
   line="${line%$'\r'}"                              # 容忍 Windows 行尾
   line="${line#"${line%%[![:space:]]*}"}"           # 去前导空白
@@ -267,6 +277,12 @@ while IFS= read -r line; do
     exit 1
   fi
   deploy_one "$line" || exit 1
+  DEPLOYED=$((DEPLOYED + 1))
 done < "$HOSTS_FILE"
 
-echo "全部部署完成"
+if [ "$DEPLOYED" -eq 0 ]; then
+  echo "错误: ${HOSTS_FILE} 中没有有效服务器行（每行一台 user@host，整行 # 开头才是注释），未部署任何主机。" >&2
+  exit 1
+fi
+
+echo "全部部署完成（共 ${DEPLOYED} 台）"

@@ -8,13 +8,13 @@ cd "$(dirname "$0")/.."          # 主仓根
 
 # ---------- 1. 工具链前置校验 ----------
 if ! command -v node >/dev/null 2>&1; then
-  echo "错误: 未找到 node。需要 Node.js ^22.19 || >=24（见 harness/package.json engines）。"
+  echo "错误: 未找到 node。需要 Node.js ^22.19 || >=24（见 harness/package.json engines）。" >&2
   exit 1
 fi
 node -e 'const s=process.versions.node.split(".").map(Number);const ok=(s[0]===22&&s[1]>=19)||s[0]>=24;if(!ok){console.error("错误: Node 版本不满足 ^22.19 || >=24（harness engines），当前 "+process.versions.node);process.exit(1)}'
 
 if ! command -v corepack >/dev/null 2>&1; then
-  echo "错误: 未找到 corepack。Node.js >=25 已不再随发行版分发 corepack，可执行 npm install -g corepack 安装；其他版本请启用 Node.js ^22.19 || >=24 后重试（如 fnm use / nvm use）。"
+  echo "错误: 未找到 corepack。Node.js >=25 已不再随发行版分发 corepack，可执行 npm install -g corepack 安装；其他版本请启用 Node.js ^22.19 || >=24 后重试（如 fnm use / nvm use）。" >&2
   exit 1
 fi
 
@@ -36,14 +36,16 @@ check_pnpm() {
   expected="$(expected_pnpm "$dir")"
   [ -n "$expected" ] || return 0   # 未声明 packageManager 的仓库跳过校验
   actual="$(actual_pnpm "$dir")"
-  [ "$actual" = "$expected" ]
+  # expected 可能带 +sha512 后缀（corepack use 生成的 hash pin）；pnpm --version
+  # 只输出版本号，比较前把后缀剥掉，避免对 hash pin 误报校验失败。
+  [ "$actual" = "${expected%%+*}" ]
 }
 verify_all_pnpm() {
   local ok=1 d
   for d in harness plugins/*/; do
     [ -f "$d/package.json" ] || continue
     if ! check_pnpm "$d"; then
-      echo "校验失败: ${d%/} 期望 pnpm@$(expected_pnpm "$d")（packageManager 字段），实际解析为 '$(actual_pnpm "$d")'。"
+      echo "校验失败: ${d%/} 期望 pnpm@$(expected_pnpm "$d")（packageManager 字段），实际解析为 '$(actual_pnpm "$d")'。" >&2
       ok=0
     fi
   done
@@ -60,11 +62,11 @@ if ! verify_all_pnpm; then
     echo "注意: 当前 node 目录（$NODE_BIN_DIR）下有非 corepack 的 pnpm（$(pnpm --version 2>/dev/null || echo 未知)），corepack enable 会将其替换为 corepack shim（shim 会按各仓库 packageManager 解析版本）。"
   fi
   if ! corepack enable; then
-    echo "错误: corepack enable 失败。请手动执行 corepack enable（必要时加 sudo，或 corepack enable --install-directory <某目录> 并把该目录加入 PATH），然后重开终端重试。"
+    echo "错误: corepack enable 失败。请手动执行 corepack enable（必要时加 sudo，或 corepack enable --install-directory <某目录> 并把该目录加入 PATH），然后重开终端重试。" >&2
     exit 1
   fi
   if ! verify_all_pnpm; then
-    echo "错误: corepack enable 后仍无法解析 pin 的 pnpm。可能原因：网络不可达（corepack 需下载 pin 版本）；corepack 缓存（COREPACK_HOME）不可写或指向异常目录；corepack 的 pnpm shim 未在 PATH 中或未优先于全局 pnpm（which pnpm 应指向 node 安装目录下的 shim）。请排查后重开终端重试。"
+    echo "错误: corepack enable 后仍无法解析 pin 的 pnpm。可能原因：网络不可达（corepack 需下载 pin 版本）；corepack 缓存（COREPACK_HOME）不可写或指向异常目录；corepack 的 pnpm shim 未在 PATH 中或未优先于全局 pnpm（which pnpm 应指向 node 安装目录下的 shim）。请排查后重开终端重试。" >&2
     exit 1
   fi
 fi
