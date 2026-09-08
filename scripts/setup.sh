@@ -5,7 +5,6 @@
 #       统一走 corepack：每个仓库按其 package.json 的 packageManager 字段解析各自 pin 的 pnpm。
 set -euo pipefail
 cd "$(dirname "$0")/.."          # 主仓根
-ROOT="$PWD"
 
 # ---------- 1. 工具链前置校验 ----------
 if ! command -v node >/dev/null 2>&1; then
@@ -15,7 +14,7 @@ fi
 node -e 'const s=process.versions.node.split(".").map(Number);const ok=(s[0]===22&&s[1]>=19)||s[0]>=24;if(!ok){console.error("错误: Node 版本不满足 ^22.19 || >=24（harness engines），当前 "+process.versions.node);process.exit(1)}'
 
 if ! command -v corepack >/dev/null 2>&1; then
-  echo "错误: 未找到 corepack（随 Node.js 分发）。请启用 Node.js ^22.19 || >=24 后重试（如 fnm use / nvm use）。"
+  echo "错误: 未找到 corepack。Node.js >=25 已不再随发行版分发 corepack，可执行 npm install -g corepack 安装；其他版本请启用 Node.js ^22.19 || >=24 后重试（如 fnm use / nvm use）。"
   exit 1
 fi
 
@@ -65,7 +64,7 @@ if ! verify_all_pnpm; then
     exit 1
   fi
   if ! verify_all_pnpm; then
-    echo "错误: corepack enable 后仍无法解析 pin 的 pnpm。请确认 corepack 的 pnpm shim 在 PATH 中优先于全局 pnpm（which pnpm 应指向 node 安装目录下的 shim），重开终端后重试。"
+    echo "错误: corepack enable 后仍无法解析 pin 的 pnpm。可能原因：网络不可达（corepack 需下载 pin 版本）；corepack 缓存（COREPACK_HOME）不可写或指向异常目录；corepack 的 pnpm shim 未在 PATH 中或未优先于全局 pnpm（which pnpm 应指向 node 安装目录下的 shim）。请排查后重开终端重试。"
     exit 1
   fi
 fi
@@ -97,6 +96,7 @@ for d in plugins/*/; do
   if [ -f "$d/pnpm-lock.yaml" ]; then
     ( cd "$d" && pnpm install --frozen-lockfile )
   else
+    echo "注意: ${d} 无 pnpm-lock.yaml，将执行非冻结安装（pnpm install），可能在插件 submodule 内生成或改动文件（如 lockfile）。如需可复现安装，请在插件仓提交 pnpm-lock.yaml。"
     ( cd "$d" && pnpm install )
   fi
   # 该插件是 monorepo 或需构建才可挂载时执行其 build
