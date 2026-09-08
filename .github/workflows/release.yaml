@@ -29,7 +29,10 @@ jobs:
           bash scripts/link-plugins.sh
           (cd harness && pnpm dsh web --no-open >/tmp/dsh.log 2>&1) &
           for i in $(seq 1 60); do
-            curl -sf http://127.0.0.1:3080 && exit 0
+            # harness 对未认证请求返回 401（认证 gate 在响应 = 服务已就绪），
+            # 303 跳认证页亦正常，故 200/303/401 均视为通过。
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3080/ || true)
+            case "$code" in 200|303|401) exit 0 ;; esac
             sleep 2
           done
           cat /tmp/dsh.log; exit 1

@@ -8,6 +8,7 @@
 - **服务器（Linux x86-64 + systemd）**：
   - Node.js `^22.19 || >=24`（23 不满足），并带 corepack（Node <25 随发行版内置；≥25 不再分发，需 `npm install -g corepack`）。**不需要预装 pnpm**：corepack 按各仓库 `packageManager` 字段解析 pin 的 pnpm 版本（以 `harness/package.json` 的 `packageManager` 字段为准），`remote-install.sh` 在服务器侧校验（比较时剥离 `+sha512` 后缀），并在 `/usr/local/bin` 维护 pnpm shim 供 systemd 服务使用。
   - `rsync`、`curl`（同步与健康检查需要）。
+  - root 的 sudo PATH（`secure_path`）需包含 Node：nvm 等用户级安装的 node 不在 root 的 `secure_path` 里，服务器侧会得到误导性的「未找到 node」报错。
 - **部署账号需要免密 sudo**（或部署账号本身是 root）：rsync 经 `--rsync-path='sudo rsync'` 写 `$DEPLOY_DIR`，无伪终端、无法交互输密码。
 - 插件仓必须提交 `pnpm-lock.yaml`：服务器侧构建强制 `--frozen-lockfile` 可复现安装，缺失直接失败。
 
@@ -36,7 +37,7 @@ make deploy
 3. **同步**：rsync 主仓源码（含 submodule 检出内容）到 `$DEPLOY_DIR`，排除 `.git` / `.dsh` / `node_modules` 等本地状态与平台产物，经 sudo rsync 写入。
 4. **服务器侧安装**（`deploy/remote-install.sh`）：工具链校验（node / corepack / pnpm 解析）→ harness `pnpm install --frozen-lockfile` + build（原生依赖按服务器平台构建，严禁跨平台拷贝 node_modules）→ 各插件 `--frozen-lockfile` + build → 插件经 `dsh plugin --profile dsh add link:` 装入 `$DEPLOY_DIR/.dsh/profiles/dsh/` → 按 `$DEPLOY_DIR` 渲染 `dsh.service` 模板（`@DEPLOY_DIR@` 占位符）并安装到 `/etc/systemd/system/dsh.service`。
 5. **服务接管**：`systemctl daemon-reload` → `enable --now` → `restart`（unit 已由上一步渲染安装）。
-6. **健康检查**：在**服务器本机**轮询 `curl http://127.0.0.1:3080`（至多 60 秒）。DSH Web 只绑定 `127.0.0.1`（harness 有意限制，不监听外网），从外部访问请用 SSH 端口转发或反向代理。
+6. **健康检查**：在**服务器本机**轮询 `curl http://127.0.0.1:3080`（至多 60 秒），HTTP 状态码 `200/303/401` 均视为就绪——harness 对未认证请求返回 `401`（浏览器 token flow 是唯一认证路径，`401` = 认证 gate 在响应 = 服务已就绪）。DSH Web 只绑定 `127.0.0.1`（harness 有意限制，不监听外网），从外部访问请用 SSH 端口转发或反向代理。
 
 幂等：可重复执行，全新机器与增量更新走同一路径。
 

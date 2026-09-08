@@ -110,10 +110,14 @@ sync_tree() { # $1=target
 }
 
 # 健康检查：轮询服务器本机 http://127.0.0.1:3080，至多 60s（30 次 × 2s）。
+# harness 对未认证请求返回 401（浏览器 token flow 是唯一认证路径，401 = 认证 gate
+# 在响应 = 服务已就绪），部分路径 303 跳认证页亦属正常，故 200/303/401 均视为通过；
+# 连接失败或其他状态码为不通过。
 health_check() { # $1=target
   local t="$1" i
-  local check_cmd="curl -sf http://127.0.0.1:3080 >/dev/null 2>&1"
-  echo "==> 健康检查 http://127.0.0.1:3080（服务器本机轮询，至多 60s）"
+  # shellcheck disable=SC2016 # 单引号有意保留 $()/$code 供服务器侧 shell 展开（远端命令字符串）
+  local check_cmd='code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3080/ || true); case "$code" in 200|303|401) exit 0 ;; *) exit 1 ;; esac'
+  echo "==> 健康检查 http://127.0.0.1:3080（服务器本机轮询，至多 60s；200/303/401 视为就绪）"
   for ((i = 1; i <= 30; i++)); do
     if [ -n "$DRY_RUN" ]; then
       printf '  [dry-run] ssh %s %s %s\n' "${SSH_OPTS[*]}" "$t" "$check_cmd"
