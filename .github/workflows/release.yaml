@@ -1,0 +1,51 @@
+name: release
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      # 干净构建 + link + 冒烟，通过才建 Release
+      - name: Build & smoke
+        env:
+          DSH_HOME: ${{ github.workspace }}/.dsh
+        run: |
+          make setup
+          bash scripts/link-plugins.sh
+          (cd harness && pnpm dsh web --no-open >/tmp/dsh.log 2>&1) &
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:3080 && exit 0
+            sleep 2
+          done
+          cat /tmp/dsh.log; exit 1
+      - name: Build snapshot manifest
+        run: |
+          {
+            echo "# Release ${{ github.ref_name }}"
+            echo ""
+            for sub in harness plugins/dsh-web; do
+              sha=$(git -C "$sub" rev-parse HEAD)
+              name=$(basename "$sub")
+              ver=$(git -C "$sub" describe --tags --abbrev=0 2>/dev/null || node -p "require('./$sub/package.json').version")
+              echo "- $name: \`$sha\` ($ver)"
+            done
+          } > RELEASE_NOTES.md
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: RELEASE_NOTES.md
