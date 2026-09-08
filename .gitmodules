@@ -1,0 +1,6 @@
+[submodule "harness"]
+	path = harness
+	url = https://github.com/deepseek-ai/deepseek-harness.git
+[submodule "plugins/dsh-web"]
+	path = plugins/dsh-web
+	url = https://github.com/zhu1090093659/dsh-web.git
