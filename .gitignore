@@ -6,3 +6,6 @@ deploy/hosts
 
 # SDD scratch workspace
 .superpowers/
+
+# Claude Code 本地状态
+.claude/
