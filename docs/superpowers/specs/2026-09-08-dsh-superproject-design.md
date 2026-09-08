@@ -16,13 +16,20 @@
 ### 目标平台（硬约束）
 
 - 本地开发机：macOS + Apple Silicon（M4，arm64）
-- 远程部署机：Linux + x86-64
+- 远程部署机：Linux(ubuntu) + x86-64
 
 两平台架构不同：**原生 Node 依赖必须按平台各自构建，严禁跨平台拷贝 `node_modules`**。服务器侧构建必须使用 `pnpm install --frozen-lockfile`。
 
 ### 插件安装位置约定（硬约束）
 
 插件默认安装在主仓 `plugins/` 目录下。若 `plugins/` 或目标目录不存在，脚本必须自动创建（`mkdir -p`），不允许因目录缺失而失败。setup/deploy 脚本在全新环境必须幂等可用。
+
+### DSH 运行目录（已定死，依据 harness 官方源码查证）
+
+- **DSH 主目录（home）**：默认 `~/.dsh`，可用 `$DSH_HOME` 环境变量覆盖；所有用户数据（配置、profile、已安装插件）都在此根下（`packages/util/home-paths/src/index.ts`）。
+- **Profile**：`$DSH_HOME/profiles/<name>/`，内含 `package.json`（插件依赖 + `dsh.profile.bundles` 清单）、`cordis.patch.yml`（用户 patch 层）与 pnpm 管理的 `node_modules`（`packages/boot/app-boot/src/profile.ts`）。
+- **可运行插件安装位置**：`dsh plugin --profile <name> add <pkg>` 在 profile 目录内执行 pnpm，插件作为依赖装入 `$DSH_HOME/profiles/<name>/node_modules/<pkg>`。
+- **本仓约定**：本地与服务器都通过 `$DSH_HOME` 把 DSH 主目录指到本仓 `.dsh/`（gitignore），即插件实际落在 `dsh/.dsh/profiles/dsh/node_modules/<pkg>`——满足"插件默认安装在该文件夹下"。profile 名固定为 `dsh`。
 
 ### 非目标（Non-goals）
 
@@ -35,6 +42,9 @@
 ```
 dsh/                          # 主仓 (superproject, GitHub 私有仓 dsh)
 ├── .gitmodules
+├── .gitignore                # 含 .dsh/、deploy/hosts
+├── .dsh/                     # DSH 运行主目录（$DSH_HOME 指向此处，gitignore，运行时生成）
+│   └── profiles/dsh/         #   固定 profile：package.json + cordis.patch.yml + node_modules/（可运行插件在此）
 ├── README.md                 # 总体说明 + 快速上手
 ├── Makefile                  # 统一入口：setup / dev / deploy / release（薄入口，~20 行）
 ├── harness/                  # [submodule] deepseek-ai/deepseek-harness，pin master
@@ -66,7 +76,7 @@ dsh/                          # 主仓 (superproject, GitHub 私有仓 dsh)
   1. `git submodule update --init --recursive`（对每个插件目录先 `mkdir -p`）
   2. harness：按 harness 仓库 README 安装依赖并构建（pnpm）
   3. 各插件：按插件仓自身的包管理器与 README 安装依赖
-- `make dev`：启动 DSH Web（默认 `http://127.0.0.1:3080`，支持 `--no-open`），并将 `plugins/*` 的包通过官方 profile 机制以 link 模式挂载，改插件源码即时生效。
+- `make dev`：以 `$DSH_HOME=./.dsh` 启动 DSH Web（默认 `http://127.0.0.1:3080`，支持 `--no-open`），并先经 `link-plugins.sh` 把 `plugins/*` 的包以 link 模式挂进 profile `dsh`（`dsh plugin --profile dsh add file:...`），改插件源码即时生效。
 - Node 版本：以 harness 与插件仓各自的 `package.json` engines / README 为准，`setup.sh` 前置校验版本。
 
 ## 4. 远程部署（Linux x86-64）
@@ -75,7 +85,7 @@ dsh/                          # 主仓 (superproject, GitHub 私有仓 dsh)
 
 1. **前置检查**：服务器需有 Node.js（与本地同版本）、pnpm、git、systemd；读 `deploy/hosts`（真实服务器清单，gitignore，仓库只留 `hosts.example`）。
 2. **同步源码**：rsync 主仓（含 submodule 检出内容）到服务器工作目录 `/opt/dsh`，按 pin 的内容整体同步。
-3. **服务器侧构建**：随源码同步过去的 `deploy/remote-install.sh` 在服务器上执行：`mkdir -p` 插件目录 → harness `pnpm install --frozen-lockfile` + build → 插件按 pin 从各自仓库安装到 `plugins/` 下（**不跨平台拷贝 node_modules**）。
+3. **服务器侧构建**：随源码同步过去的 `deploy/remote-install.sh` 在服务器上执行：`mkdir -p` 插件目录 → harness `pnpm install --frozen-lockfile` + build → 插件按 pin 从各自仓库构建后经 `dsh plugin --profile dsh add` 装进 `$DSH_HOME/profiles/dsh/node_modules/`（服务器上 `$DSH_HOME=/opt/dsh/.dsh`，**不跨平台拷贝 node_modules**）。
 4. **服务接管**：安装/更新 `dsh.service`（systemd unit）→ `daemon-reload` → `restart`。
 5. **健康检查**：轮询 `http://<server>:3080` 通过才算成功；失败回滚到上一次产物并报错。
 

@@ -1,0 +1,5 @@
+# DSH 运行主目录（$DSH_HOME，运行时生成）
+.dsh/
+
+# 真实服务器清单（只提交 hosts.example）
+deploy/hosts
