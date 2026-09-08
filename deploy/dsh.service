@@ -1,19 +1,23 @@
+# 本文件是模板：部署路径处的占位符由 deploy/remote-install.sh 按 $DEPLOY_DIR
+# （默认 /opt/dsh）渲染替换后安装到 /etc/systemd/system/dsh.service。
+# systemd 不支持把 Environment= 变量展开进 WorkingDirectory/ExecStart，
+# 故 unit 以模板随源码同步、在服务器侧渲染。
 [Unit]
 Description=DeepSeek Harness (DSH) Web
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/dsh/harness
-# $DSH_HOME 必须与 remote-install.sh 一致：插件/配置都落 /opt/dsh/.dsh
-Environment=DSH_HOME=/opt/dsh/.dsh
+WorkingDirectory=@DEPLOY_DIR@/harness
+# $DSH_HOME 必须与 remote-install.sh 一致：插件/配置都落 @DEPLOY_DIR@/.dsh
+Environment=DSH_HOME=@DEPLOY_DIR@/.dsh
 Environment=NODE_ENV=production
-# 与 remote-install.sh 的 Ruling 5 防御一致：解析不到 pin 的 pnpm 时宁可报错也不回落 latest
+# 与 remote-install.sh 的 corepack 防御一致：解析不到 pin 的 pnpm 时宁可报错也不回落 latest
 Environment=COREPACK_DEFAULT_TO_LATEST=0
 # 源码运行入口是 harness 根脚本 `pnpm dsh`（harness/node_modules/.bin 下没有 dsh）。
 # pnpm 为 corepack shim：remote-install.sh 已保证 /usr/local/bin/pnpm 存在，
 # corepack 按 harness/package.json 的 packageManager 解析 pin 的 pnpm 版本（版本随 harness pin 漂移，勿在此硬编码）。
-ExecStart=/usr/local/bin/pnpm --dir /opt/dsh/harness dsh web --no-open
+ExecStart=/usr/local/bin/pnpm --dir @DEPLOY_DIR@/harness dsh web --no-open
 Restart=on-failure
 RestartSec=3
 

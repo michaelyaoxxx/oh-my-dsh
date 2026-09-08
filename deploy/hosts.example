@@ -1,5 +1,5 @@
 # deploy/hosts — 远程服务器清单模板（真实清单 deploy/hosts 已被 gitignore，不提交）
-# 每行一台服务器，格式为 user@host；部署目录固定为 /opt/dsh，无需在此配置。
+# 每行一台服务器，格式为 user@host；部署目录由 DEPLOY_DIR 环境变量指定（默认 /opt/dsh），无需在此配置。
 # 复制本文件为 deploy/hosts 并填写真实主机；整行以 # 开头才是注释。
 # 示例（勿提交真实凭据）：
 # deploy@1.2.3.4

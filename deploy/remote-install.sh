@@ -6,22 +6,27 @@
 # 幂等：全新机器与增量更新均可重复执行；所有依赖都在服务器平台构建，
 #       严禁从其他平台拷贝 node_modules。
 #
-# 供 Task 5（scripts/deploy-remote.sh）消费的接口：
-#   入口：rsync 完成后在服务器执行  bash /opt/dsh/deploy/remote-install.sh
-#   部署目录：固定 /opt/dsh（本脚本必须位于 /opt/dsh/deploy/ 下，否则报错退出）
+# 供 scripts/deploy-remote.sh 消费的接口：
+#   入口：rsync 完成后在服务器执行  sudo bash $DEPLOY_DIR/deploy/remote-install.sh
+#         （DEPLOY_DIR 由 deploy-remote.sh 经环境变量传入）
+#   部署目录：$DEPLOY_DIR（环境变量，默认 /opt/dsh；本脚本必须位于 $DEPLOY_DIR/deploy/ 下，否则报错退出）
 #   退出码：0 成功；任何失败 1（set -euo pipefail）
 #   成功标志：输出最后一行是「remote-install 完成」
-#   配套 unit：deploy/dsh.service 的 ExecStart 依赖本脚本保证的 /usr/local/bin/pnpm corepack shim
-#   约定：$DSH_HOME=/opt/dsh/.dsh（与 deploy/dsh.service、本地 .dsh 约定一致），profile 名固定 dsh
+#   配套 unit：本脚本按 $DEPLOY_DIR 渲染 deploy/dsh.service 模板（@DEPLOY_DIR@ 占位符）
+#             并安装到 /etc/systemd/system/dsh.service；ExecStart 依赖本脚本保证的
+#             /usr/local/bin/pnpm corepack shim
+#   约定：$DSH_HOME=$DEPLOY_DIR/.dsh（与 deploy/dsh.service、本地 .dsh 约定一致），profile 名固定 dsh
 set -euo pipefail
 
 # ---------- 0. 部署目录与平台 ----------
-cd "$(dirname "$0")/.."          # 主仓根（固定 /opt/dsh）
+cd "$(dirname "$0")/.."          # 主仓根（=$DEPLOY_DIR）
 ROOT="$PWD"
-if [ "$ROOT" != "/opt/dsh" ]; then
-  echo "错误: 部署目录必须是 /opt/dsh（当前为 ${ROOT}）。请将仓库 rsync 到 /opt/dsh 后重试。" >&2
+DEPLOY_DIR="${DEPLOY_DIR:-/opt/dsh}"
+if [ "$ROOT" != "$DEPLOY_DIR" ]; then
+  echo "错误: 部署目录必须是 ${DEPLOY_DIR}（当前为 ${ROOT}）。请将仓库 rsync 到 ${DEPLOY_DIR} 后重试（deploy-remote.sh 会经 DEPLOY_DIR 环境变量传入）。" >&2
   exit 1
 fi
+export DEPLOY_DIR
 if [ "$(uname -s)" != "Linux" ]; then
   echo "错误: remote-install.sh 只能在 Linux 服务器上执行（当前 $(uname -s)）。请勿在本地直接运行。" >&2
   exit 1
@@ -116,7 +121,7 @@ done
 
 # ---------- 5. pnpm 版本锚点（与 scripts/link-plugins.sh 机制一致） ----------
 # dsh plugin 会在 profile 目录里 spawn pnpm，corepack 从该目录向上找 packageManager；
-# /opt/dsh 根没有 package.json，corepack 会回落 latest。在 $DSH_HOME 放一个只含
+# $DEPLOY_DIR 根没有 package.json，corepack 会回落 latest。在 $DSH_HOME 放一个只含
 # packageManager 的 package.json 作锚点，钉住 harness 使用的 pnpm 版本，并禁止回落。
 PIN="$(node -p "require('$ROOT/harness/package.json').packageManager")"
 # corepack use 生成的 pin 可能带 +sha512 后缀；版本比较统一只比版本号部分，
@@ -161,7 +166,18 @@ case "$NODE_DIR" in
   *) echo "警告: node 位于 ${NODE_DIR}，不在系统默认 PATH 中；systemd 启动 dsh.service 时可能找不到 node。" >&2 ;;
 esac
 
-# ---------- 7. 挂载 bundle：把可挂载的插件包以 link 装进 profile dsh ----------
+# ---------- 7. 渲染并安装 systemd unit ----------
+# deploy/dsh.service 是模板（@DEPLOY_DIR@ 占位符）：systemd 无法把 Environment= 变量
+# 展开进 WorkingDirectory/ExecStart，故在服务器侧按 $DEPLOY_DIR 渲染真实 unit 后安装
+# （服务器侧渲染可避免本地 sed 路径转义跨 ssh/sudo 多层 shell）。unit 落点
+# /etc/systemd/system/dsh.service 不变。
+UNIT_SRC="$ROOT/deploy/dsh.service"
+[ -f "$UNIT_SRC" ] || { echo "错误: 未找到 deploy/dsh.service（rsync 内容不完整？）。" >&2; exit 1; }
+sed "s|@DEPLOY_DIR@|${DEPLOY_DIR}|g" "$UNIT_SRC" > /etc/systemd/system/dsh.service \
+  || { echo "错误: 渲染/安装 dsh.service 失败（写入 /etc/systemd/system/dsh.service 需要 root 权限）。" >&2; exit 1; }
+echo "已渲染并安装 unit: /etc/systemd/system/dsh.service（DEPLOY_DIR=${DEPLOY_DIR}）"
+
+# ---------- 8. 挂载 bundle：把可挂载的插件包以 link 装进 profile dsh ----------
 # 机制与 scripts/link-plugins.sh 一致（同一套探测/筛选逻辑，服务器侧执行）：
 # 可挂载候选 = plugins/*/ 根包或 packages/*/ 子包中声明了 dsh.bundle.patch 且 patch
 # 落在自己包目录内的包；被其他候选依赖的候选（聚合包的家族成员）不单独挂载。

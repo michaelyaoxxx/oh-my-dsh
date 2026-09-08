@@ -5,22 +5,24 @@
 #   1. 预检：免密 ssh 可达；服务器需有 rsync/curl/systemctl。
 #      node/pnpm/corepack 等工具链重预检由 deploy/remote-install.sh 负责（与
 #      scripts/setup.sh 同款校验），本脚本不重复实现。
-#   2. 快照上一版本产物到 /opt/dsh-snapshot（全新机器跳过）。
-#   3. rsync 主仓（含 submodule 检出内容）到 /opt/dsh，排除 .git/.dsh/
+#   2. 快照上一版本产物到 $DEPLOY_DIR-snapshot（全新机器跳过）。
+#   3. rsync 主仓（含 submodule 检出内容）到 $DEPLOY_DIR，排除 .git/.dsh/
 #      node_modules/ 等平台产物与本地状态；依赖一律服务器侧构建，
-#      严禁跨平台拷贝 node_modules。rsync 经 --rsync-path 以 sudo 写 /opt/dsh。
-#   4. 服务器执行 /opt/dsh/deploy/remote-install.sh（sudo，同一 root 身份）。
-#   5. 安装/更新 dsh.service → systemctl daemon-reload → enable --now → restart。
+#      严禁跨平台拷贝 node_modules。rsync 经 --rsync-path 以 sudo 写 $DEPLOY_DIR。
+#   4. 服务器执行 $DEPLOY_DIR/deploy/remote-install.sh（sudo，同一 root 身份），
+#      该脚本顺带按 $DEPLOY_DIR 渲染并安装 dsh.service。
+#   5. systemctl daemon-reload → enable --now → restart。
 #   6. 健康检查：轮询 http://127.0.0.1:3080（服务器本机）。harness 的 dsh web
 #      默认只绑 127.0.0.1（web-app cordis.patch.yml: host 缺省 '127.0.0.1'），
 #      且 --host 0.0.0.0 被 CLI 有意拒绝，故必须服务器侧探测，本地 curl 到
 #      <server>:3080 会恒失败。
-#   任一步失败：回滚到 /opt/dsh-snapshot 并报错（全新机器无快照时给出明确提示）。
+#   任一步失败：回滚到 $DEPLOY_DIR-snapshot 并报错（全新机器无快照时给出明确提示）。
 #
 # 幂等：可重复执行（全新机器与增量更新同一路径）；快照每次部署前刷新。
 # 约定：
 #   - deploy/hosts 每行一台 user@host；整行 # 开头为注释；空行跳过。
-#   - 部署目录固定 /opt/dsh；DSH_HOME=/opt/dsh/.dsh；profile 名固定 dsh。
+#   - 部署目录由 DEPLOY_DIR 环境变量指定（默认 /opt/dsh，所有服务器同一值）；
+#     DSH_HOME=$DEPLOY_DIR/.dsh；profile 名固定 dsh。
 #   - 服务器侧所有写操作统一经 sudo 以 root 执行（与 dsh.service 以 root 运行
 #     一致：install 期与运行期共享同一 corepack 缓存身份，服务启动无需重新
 #     下载 pnpm；不使用 sudo -E，避免 HOME 留在部署账号导致缓存身份漂移）。
@@ -28,12 +30,17 @@
 #     伪终端），但 rsync 的 --rsync-path 无伪终端，其 sudo 需免密或部署账号
 #     为 root（失败时给出明确提示）。
 #   - --dry-run 只打印将执行的命令，不连接任何主机；HOSTS_FILE 环境变量可
-#     覆盖清单路径（默认 deploy/hosts）。
+#     覆盖清单路径（默认 deploy/hosts）；DEPLOY_DIR 覆盖部署目录。
 # 退出码：0 成功；任何失败 1。
 set -euo pipefail
 cd "$(dirname "$0")/.."          # 主仓根
 ROOT="$PWD"
 HOSTS_FILE="${HOSTS_FILE:-deploy/hosts}"
+# 服务器侧所有目标路径都从 DEPLOY_DIR 派生（快照目录取 $DEPLOY_DIR-snapshot）；
+# export 使 deploy/remote-install.sh 能收到同一值（见 install_cmd 的显式传入）。
+DEPLOY_DIR="${DEPLOY_DIR:-/opt/dsh}"
+SNAPSHOT_DIR="${DEPLOY_DIR}-snapshot"
+export DEPLOY_DIR
 
 DRY_RUN=""
 for arg in "$@"; do
@@ -73,18 +80,18 @@ remote_sudo() { # $1=target；$2=服务器命令（单字符串）
   ssh "${SSH_OPTS[@]}" -t "$t" "sudo bash -c $(shell_quote "$cmd")"
 }
 
-# rsync 参数单一来源：dry-run 打印与真实执行不漂移。
+# rsync 参数单一来源：dry-run 打印与真实执行不漂移；-e 复用 SSH_OPTS 防挂起。
 RSYNC_ARGS=(
   -az --delete --rsync-path='sudo rsync'
   --exclude '.git' --exclude '.dsh/' --exclude 'node_modules/'
   --exclude 'deploy/hosts' --exclude '.superpowers/' --exclude '.DS_Store'
-  -e ssh
+  -e "ssh ${SSH_OPTS[*]}"
 )
 
 sync_tree() { # $1=target
   local t="$1"
   # 命令存单一变量：dry-run 打印与真实执行共用同一份参数，不漂移。
-  local cmd=( rsync "${RSYNC_ARGS[@]}" "$ROOT/" "$t:/opt/dsh/" )
+  local cmd=( rsync "${RSYNC_ARGS[@]}" "$ROOT/" "$t:${DEPLOY_DIR}/" )
   if [ -n "$DRY_RUN" ]; then
     printf '  [dry-run]'
     printf ' %q' "${cmd[@]}"
@@ -115,25 +122,26 @@ health_check() { # $1=target
   return 1
 }
 
-# 回滚：把 /opt/dsh-snapshot（上一版本产物，含 node_modules 与 .dsh 运行态）整体
-# rsync 回 /opt/dsh，恢复上一版本 unit 后 daemon-reload 并重启服务（重启为尽力而为，
-# 失败不影响产物已恢复的结论）。快照内的 deploy/dsh.service 即上一版本 unit
-# （随上一 pin 的源码一同同步到服务器的）。
+# 回滚：把 $DEPLOY_DIR-snapshot（上一版本产物，含 node_modules 与 .dsh 运行态）整体
+# rsync 回 $DEPLOY_DIR，恢复上一版本 unit 后 daemon-reload 并重启服务（重启为尽力而为，
+# 失败不影响产物已恢复的结论）。快照内的 deploy/dsh.service 是上一版本模板，
+# 恢复时按当前 DEPLOY_DIR 重新渲染后安装到 /etc/systemd/system/dsh.service。
 rollback_one() { # $1=target
   local t="$1"
-  echo "==> 回滚 ${t} 到上一版本快照（/opt/dsh-snapshot）"
+  echo "==> 回滚 ${t} 到上一版本快照（${SNAPSHOT_DIR}）"
   # 回滚命令存单一变量：dry-run 打印与真实执行同一份内容。
-  local rollback_cmd="rsync -a --delete /opt/dsh-snapshot/ /opt/dsh/ && cp /opt/dsh-snapshot/deploy/dsh.service /etc/systemd/system/dsh.service && systemctl daemon-reload && { systemctl restart dsh || true; }"
+  local rollback_cmd="rsync -a --delete ${SNAPSHOT_DIR}/ ${DEPLOY_DIR}/ && sed 's|@DEPLOY_DIR@|${DEPLOY_DIR}|g' ${SNAPSHOT_DIR}/deploy/dsh.service > /etc/systemd/system/dsh.service && systemctl daemon-reload && { systemctl restart dsh || true; }"
   if [ -n "$DRY_RUN" ]; then
     remote_sudo "$t" "$rollback_cmd"
     return 0
   fi
-  if ! ssh "${SSH_OPTS[@]}" "$t" "test -d /opt/dsh-snapshot"; then
-    echo "错误: 服务器无上一版本快照（/opt/dsh-snapshot），无法回滚。请登录 ${t} 检查 /opt/dsh 状态。" >&2
+  # shellcheck disable=SC2029 # 路径为本地派生的 SNAPSHOT_DIR，按设计在客户端展开
+  if ! ssh "${SSH_OPTS[@]}" "$t" "test -d ${SNAPSHOT_DIR}"; then
+    echo "错误: 服务器无上一版本快照（${SNAPSHOT_DIR}），无法回滚。请登录 ${t} 检查 ${DEPLOY_DIR} 状态。" >&2
     return 1
   fi
   if ! remote_sudo "$t" "$rollback_cmd"; then
-    echo "错误: 回滚失败（快照恢复或 unit 安装出错）。请登录 ${t} 检查 /opt/dsh 与 systemctl status dsh。" >&2
+    echo "错误: 回滚失败（快照恢复或 unit 安装出错）。请登录 ${t} 检查 ${DEPLOY_DIR} 与 systemctl status dsh。" >&2
     return 1
   fi
   echo "已回滚: ${t} 恢复为上一版本产物（服务已尽力按上一版本重启，可登录执行 systemctl status dsh 确认）"
@@ -141,7 +149,7 @@ rollback_one() { # $1=target
 
 deploy_one() { # $1=target（user@host）
   local target="$1" install_log install_cmd
-  echo "==> 部署到 ${target}（/opt/dsh）"
+  echo "==> 部署到 ${target}（${DEPLOY_DIR}）"
 
   # ---- 1. 预检：免密 ssh 可达；服务器需有 rsync/curl/systemctl ----
   if [ -n "$DRY_RUN" ]; then
@@ -159,13 +167,13 @@ deploy_one() { # $1=target（user@host）
 
   # ---- 2. 快照上一版本产物（全新机器跳过；spec §4「部署前快照」）----
   # 服务器侧命令按实际分支打印「已快照」或「无上一版本，跳过快照」，本地不再预打印 banner。
-  if ! remote_sudo "$target" "if [ ! -d /opt/dsh ]; then echo 无上一版本，跳过快照; else rsync -a --delete /opt/dsh/ /opt/dsh-snapshot/ && echo 已快照: /opt/dsh-snapshot; fi"; then
-    echo "错误: 快照失败（/opt/dsh → /opt/dsh-snapshot）。请检查 ${target} 磁盘空间后重试。" >&2
+  if ! remote_sudo "$target" "if [ ! -d ${DEPLOY_DIR} ]; then echo 无上一版本，跳过快照; else rsync -a --delete ${DEPLOY_DIR}/ ${SNAPSHOT_DIR}/ && echo 已快照: ${SNAPSHOT_DIR}; fi"; then
+    echo "错误: 快照失败（${DEPLOY_DIR} → ${SNAPSHOT_DIR}）。请检查 ${target} 磁盘空间后重试。" >&2
     return 1
   fi
 
-  # ---- 3. rsync 源码（含 submodule 检出内容）到 /opt/dsh ----
-  echo "==> 同步源码到 ${target}:/opt/dsh/"
+  # ---- 3. rsync 源码（含 submodule 检出内容）到 $DEPLOY_DIR ----
+  echo "==> 同步源码到 ${target}:${DEPLOY_DIR}/"
   if ! sync_tree "$target"; then
     echo "错误: rsync 同步失败。请确认 ${target} 的 sudo 可免密执行 rsync（--rsync-path 无伪终端，无法交互输 sudo 密码），或部署账号为 root。" >&2
     rollback_one "$target" || true
@@ -177,7 +185,8 @@ deploy_one() { # $1=target（user@host）
   # 成功时输出最后一行恒为「remote-install 完成」。CI=true 由 remote-install.sh
   # 内部处理，本脚本不绕过。
   echo "==> 服务器侧安装（deploy/remote-install.sh）"
-  install_cmd="sudo bash /opt/dsh/deploy/remote-install.sh"
+  # DEPLOY_DIR 经 sudo 的 VAR=value 前缀显式传入（sudo 默认清空环境，不用 sudo -E）。
+  install_cmd="sudo DEPLOY_DIR=${DEPLOY_DIR} bash ${DEPLOY_DIR}/deploy/remote-install.sh"
   if [ -n "$DRY_RUN" ]; then
     printf '  [dry-run] ssh %s -t %s %s（校验 exit 0 且最后一行「remote-install 完成」）\n' "${SSH_OPTS[*]}" "$target" "$install_cmd"
   else
@@ -195,10 +204,10 @@ deploy_one() { # $1=target（user@host）
     rm -f "$install_log"
   fi
 
-  # ---- 5. 安装/更新 systemd unit 并重启（spec §4 第 4 步）----
-  echo "==> 安装并重启 systemd 服务 dsh"
-  if ! remote_sudo "$target" "cp /opt/dsh/deploy/dsh.service /etc/systemd/system/dsh.service && systemctl daemon-reload && systemctl enable --now dsh && systemctl restart dsh"; then
-    echo "错误: dsh.service 安装或重启失败。可登录 ${target} 执行 systemctl status dsh 排查。" >&2
+  # ---- 5. 启用并重启 systemd 服务（spec §4 第 4 步；unit 已由 remote-install.sh 渲染安装）----
+  echo "==> 启用并重启 systemd 服务 dsh"
+  if ! remote_sudo "$target" "systemctl daemon-reload && systemctl enable --now dsh && systemctl restart dsh"; then
+    echo "错误: dsh 服务启用或重启失败。可登录 ${target} 执行 systemctl status dsh 排查。" >&2
     rollback_one "$target" || true
     return 1
   fi
