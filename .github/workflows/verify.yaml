@@ -25,6 +25,7 @@ jobs:
           set -e
           for pair in "harness master" "plugins/dsh-web main"; do
             set -- $pair
+            git -C "$1" fetch origin "$2"
             [ "$(git -C "$1" rev-parse HEAD)" = "$(git -C "$1" rev-parse origin/$2)" ] \
               || { echo "$1 pin 与 $2 不一致（可能未推送）"; exit 1; }
           done
