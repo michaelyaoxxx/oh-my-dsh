@@ -76,18 +76,18 @@ dsh/                          # 主仓 (superproject, GitHub 私有仓 dsh)
   1. `git submodule update --init --recursive`（对每个插件目录先 `mkdir -p`）
   2. harness：按 harness 仓库 README 安装依赖并构建（pnpm）
   3. 各插件：按插件仓自身的包管理器与 README 安装依赖
-- `make dev`：以 `$DSH_HOME=./.dsh` 启动 DSH Web（默认 `http://127.0.0.1:3080`，支持 `--no-open`），并先经 `link-plugins.sh` 把 `plugins/*` 的包以 link 模式挂进 profile `dsh`（`dsh plugin --profile dsh add file:...`），改插件源码即时生效。
+- `make dev`：以 `$DSH_HOME=./.dsh` 启动 DSH Web（默认 `http://127.0.0.1:3080`，支持 `--no-open`），并先经 `link-plugins.sh` 把 `plugins/*` 的包以 link 模式挂进 profile `dsh`（`dsh plugin --profile dsh add link:...`），改插件源码即时生效。
 - Node 版本：以 harness 与插件仓各自的 `package.json` engines / README 为准，`setup.sh` 前置校验版本。
 
 ## 4. 远程部署（Linux x86-64）
 
 `make deploy`（本地 Mac 发起）→ `scripts/deploy-remote.sh`：
 
-1. **前置检查**：服务器需有 Node.js（与本地同版本）、pnpm、git、systemd；读 `deploy/hosts`（真实服务器清单，gitignore，仓库只留 `hosts.example`）。
+1. **前置检查**：服务器需有 Node.js（`^22.19 || >=24`，带 corepack）与 systemd；pnpm 无需预装（corepack 按各仓库 `packageManager` 字段解析 pin 版本），git 亦不需要（rsync 同步不依赖服务器侧 git）；读 `deploy/hosts`（真实服务器清单，gitignore，仓库只留 `hosts.example`）。
 2. **同步源码**：rsync 主仓（含 submodule 检出内容）到服务器工作目录 `$DEPLOY_DIR`（环境变量指定，默认 `/opt/dsh`），按 pin 的内容整体同步。
-3. **服务器侧构建**：随源码同步过去的 `deploy/remote-install.sh` 在服务器上执行：`mkdir -p` 插件目录 → harness `pnpm install --frozen-lockfile` + build → 插件按 pin 从各自仓库构建后经 `dsh plugin --profile dsh add` 装进 `$DSH_HOME/profiles/dsh/node_modules/`（服务器上 `$DSH_HOME=/opt/dsh/.dsh`，**不跨平台拷贝 node_modules**）。
+3. **服务器侧构建**：随源码同步过去的 `deploy/remote-install.sh` 在服务器上执行：`mkdir -p` 插件目录 → harness `pnpm install --frozen-lockfile` + build → 插件按 pin 从各自仓库构建后经 `dsh plugin --profile dsh add` 装进 `$DSH_HOME/profiles/dsh/node_modules/`（服务器上 `$DSH_HOME=$DEPLOY_DIR/.dsh`，**不跨平台拷贝 node_modules**）。
 4. **服务接管**：安装/更新 `dsh.service`（systemd unit）→ `daemon-reload` → `restart`。
-5. **健康检查**：在服务器本机轮询 `curl http://127.0.0.1:3080`（harness 只绑定回环地址）通过才算成功；失败回滚到上一次产物并报错。
+5. **健康检查**：在服务器本机轮询 `http://127.0.0.1:3080`（harness 只绑定回环地址），HTTP 状态码 `200/303/401` 均视为通过——未认证请求 harness 返回 `401`（浏览器 token flow 是唯一认证路径，`401` = 认证 gate 在响应 = 服务已就绪）；连接失败或其他状态码不通过。通过才算成功；失败回滚到上一次产物并报错。
 
 要点：
 
