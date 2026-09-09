@@ -4,3 +4,6 @@
 [submodule "plugins/dsh-web"]
 	path = plugins/dsh-web
 	url = https://github.com/zhu1090093659/dsh-web.git
+[submodule "plugins/dsh-better-sidebar"]
+	path = plugins/dsh-better-sidebar
+	url = https://github.com/omdsh-dev/DSH-better-sidebar.git
