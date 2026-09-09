@@ -12,3 +12,6 @@ deploy/hosts
 
 # release.sh 生成的快照清单（只作记录，不入库）
 RELEASE_NOTES.md
+
+# make 目标输出日志（setup/dev/deploy/release 等落盘）
+log/
