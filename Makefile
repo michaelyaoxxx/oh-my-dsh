@@ -13,7 +13,8 @@ dev: link-plugins ## 启动 DSH Web（$DSH_HOME=./.dsh，--no-open 可加）
 	# CI=true 原因与 scripts/setup.sh 相同：pnpm 11 跑脚本前默认校验依赖，脏时会先自动
 	# pnpm install，重装会触发 harness 根 postinstall（install-lefthook.mjs），在 submodule
 	# 环境必然失败；export CI=true 使其跳过 hooks 安装（与 GitHub Actions 全局 CI=true 一致）。
-	cd harness && DSH_HOME="$(CURDIR)/.dsh" CI=true pnpm dsh web --no-open
+	# `dsh web` 别名 boot 官方模板 web profile，挂载目标是 dsh，故显式 `--profile dsh`
+	cd harness && DSH_HOME="$(CURDIR)/.dsh" CI=true pnpm dsh --profile dsh --no-open
 
 deploy: ## 部署到远程服务器（读 deploy/hosts）
 	bash scripts/deploy-remote.sh

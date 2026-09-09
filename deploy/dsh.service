@@ -15,9 +15,11 @@ Environment=NODE_ENV=production
 # 与 remote-install.sh 的 corepack 防御一致：解析不到 pin 的 pnpm 时宁可报错也不回落 latest
 Environment=COREPACK_DEFAULT_TO_LATEST=0
 # 源码运行入口是 harness 根脚本 `pnpm dsh`（harness/node_modules/.bin 下没有 dsh）。
+# `dsh web` 别名 boot 官方模板 web profile；挂载目标（remote-install.sh）是 profile
+# dsh，故显式 `--profile dsh` 使挂载与 boot 一致。
 # pnpm 为 corepack shim：remote-install.sh 已保证 /usr/local/bin/pnpm 存在，
 # corepack 按 harness/package.json 的 packageManager 解析 pin 的 pnpm 版本（版本随 harness pin 漂移，勿在此硬编码）。
-ExecStart=/usr/local/bin/pnpm --dir @DEPLOY_DIR@/harness dsh web --no-open
+ExecStart=/usr/local/bin/pnpm --dir @DEPLOY_DIR@/harness dsh --profile dsh --no-open
 Restart=on-failure
 RestartSec=3
 

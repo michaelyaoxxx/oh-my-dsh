@@ -29,6 +29,17 @@ jobs:
             [ "$(git -C "$1" rev-parse HEAD)" = "$(git -C "$1" rev-parse origin/$2)" ] \
               || { echo "$1 pin 与 $2 不一致（可能未推送）"; exit 1; }
           done
+      # 1b. tag-pin 一致性（dsh-better-sidebar pin 正式发布 tag；tag 存在于远端即已发布，
+      #     与分支比对的「拦截本地未推送 commit」同语义）
+      - name: Check tag-pinned submodules
+        run: |
+          set -e
+          for pair in "plugins/dsh-better-sidebar v0.18.0"; do
+            set -- $pair
+            git -C "$1" fetch origin "refs/tags/$2"
+            [ "$(git -C "$1" rev-parse HEAD)" = "$(git -C "$1" rev-parse "$2")" ] \
+              || { echo "$1 pin 与 tag $2 不一致（可能未推送）"; exit 1; }
+          done
       # 1.5 shellcheck 静态检查（本地以 0.11.0 -S style 全绿；CI 固定同版本语义）
       - name: ShellCheck scripts
         run: |
@@ -46,7 +57,7 @@ jobs:
         env:
           DSH_HOME: ${{ github.workspace }}/.dsh
         run: |
-          (cd harness && pnpm dsh web --no-open >/tmp/dsh.log 2>&1) &
+          (cd harness && pnpm dsh --profile dsh --no-open >/tmp/dsh.log 2>&1) &
           for i in $(seq 1 60); do
             # harness 对未认证请求返回 401（认证 gate 在响应 = 服务已就绪），
             # 303 跳认证页亦正常，故 200/303/401 均视为通过。
