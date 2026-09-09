@@ -7,3 +7,6 @@
 [submodule "plugins/dsh-better-sidebar"]
 	path = plugins/dsh-better-sidebar
 	url = https://github.com/omdsh-dev/DSH-better-sidebar.git
+[submodule "plugins/dsh-plugin-mineru"]
+	path = plugins/dsh-plugin-mineru
+	url = https://github.com/HuanLinOTO/dsh-plugin-mineru.git
