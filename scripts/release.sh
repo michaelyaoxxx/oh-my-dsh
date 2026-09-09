@@ -35,6 +35,31 @@ check_pin() { # $1=path  $2=stable_branch
 check_pin harness master
 check_pin plugins/dsh-web main
 
+# tag-pin 校验：submodule pin 与远端正式 tag 一致（dsh-better-sidebar 等按 tag 发布的插件仓；
+# tag 存在于远端即已发布，与分支比对的「防本地未推送 commit 被误 pin」同语义）。
+check_pin_tag() { # $1=path  $2=tag
+  local sub="$1" tag="$2"
+  local pinned remote
+  if ! pinned=$(git -C "$sub" rev-parse HEAD 2>/dev/null); then
+    echo "错误: 无法读取 ${sub} 的 pin（submodule 未初始化或目录缺失？）。请先运行 make setup 初始化 submodule。" >&2
+    exit 1
+  fi
+  if ! git -C "$sub" fetch origin "refs/tags/${tag}" >/dev/null 2>&1; then
+    echo "错误: ${sub} fetch origin tag ${tag} 失败，无法核对 pin。请检查网络后手动执行: git -C ${sub} fetch origin refs/tags/${tag}" >&2
+    exit 1
+  fi
+  if ! remote=$(git -C "$sub" rev-parse "${tag}"); then
+    echo "错误: ${sub} 缺少 tag ${tag}，无法核对 pin。请确认远端存在该 tag 并手动执行: git -C ${sub} fetch origin refs/tags/${tag}" >&2
+    exit 1
+  fi
+  if [ "$pinned" != "$remote" ]; then
+    echo "警告: $sub pin($pinned) 与 tag ${tag}($remote) 不一致" >&2
+    echo "如已发布，请显式更新 pin 再发布" >&2
+    exit 1
+  fi
+}
+check_pin_tag plugins/dsh-better-sidebar v0.18.0
+
 # 3. 版本号
 VERSION="${1:-}"
 [ -z "$VERSION" ] && { echo "用法: make release VERSION=v0.1.0 或 bash scripts/release.sh v0.1.0" >&2; exit 1; }
