@@ -1,0 +1,24 @@
+# 让 connection 服务的 fiber 作用域包含 webServer，修复 host 侧 RPC 通道注册。
+#
+# 根因：HostConnectionService.rpc 的 getter 捕获 `const owner = this.ctx`
+# （harness/packages/client/connection/src/rpc-host.ts:80）；Service 的 ctx 是构造时存入的
+# 服务自身 ctx，故 register() 末尾的 `owner.webServer.register(route)`（同文件 :179）在
+# **connection 插件自己的 fiber 链**上解析 webServer——cordis 的服务解析 walk 起点是
+# `(ctx[symbols.shadow] ?? ctx).fiber`（harness/vendor/cordis/src/reflect.ts:155），
+# 而不是从调用方 ctx 出发。本 profile 的 connection entry 只注入 webRuntime
+# （`dsh --dump-config` 可查），webServer 由兄弟 entry 提供、不在其 fiber 链上，于是任何
+# host 侧插件调用 ctx.connection.rpc.handle 都报：
+#   cannot get property "webServer" without inject
+# dsh-plugin-mineru 的 registerRpc 是第一个这样的调用方；给 mineru 自己加 inject 无用
+# （实测其 fiber.inject/fiber.store 已含 webServer 仍报错，walk 不走它）。
+#
+# 处置：在 entry 级 inject 补 webServer——loader 会并入 fiber.inject（harness/vendor/loader/
+# src/index.ts:122），且发生在 fiber 解析依赖之前。webRuntime 必须保留：patch 的 inject 是
+# 整表替换（harness/vendor/include/src/index.ts:121-124 逐 key 赋值），而该 entry 的 config
+# 用 !!js ctx.webRuntime.trustedHosts。上游若给该 entry 新增 inject 项，需同步补列。
+# 副作用：connection 现在等 webServer 就绪后才加载，故 profile dsh 必须始终带 web 宿主
+# bundle（scripts/link-plugins.sh 已幂等 ensure @deepseek-ai/dsh-web-app）。
+- id: connection
+  inject:
+    - webRuntime
+    - webServer
