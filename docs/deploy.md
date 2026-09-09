@@ -59,3 +59,15 @@ ssh <host> sudo systemctl restart dsh    # 重启
 ```
 
 unit 名为 `dsh`：以 root 运行，`WorkingDirectory=$DEPLOY_DIR/harness`，`ExecStart=/usr/local/bin/pnpm --dir $DEPLOY_DIR/harness dsh web --no-open`，环境变量 `DSH_HOME=$DEPLOY_DIR/.dsh`、`NODE_ENV=production`，`Restart=on-failure`。unit 由 `remote-install.sh` 按 `$DEPLOY_DIR` 渲染模板（`@DEPLOY_DIR@` 占位符）后安装到 `/etc/systemd/system/dsh.service`。
+
+## 运行形态（为什么是源码态入口，而非全局 CLI / 二进制）
+
+服务与本地 `make dev` 跑同一个官方入口 `pnpm dsh`（harness 根 `package.json` 的 script：`node --import tsx/esm apps/cli/src/bin.ts`）。这里的「源码态」比直觉轻得多：
+
+- tsx 只转译 **CLI 壳层**（`apps/cli/src` 下相对 import 的少量文件）；各 workspace 子包的 `main` 都指向 `lib/` 编译产物（`pnpm build` 产出，setup/remote-install 每次部署都执行）。运行主体是编译后的 JS，TS 源码与 sourcemap 不进运行热路径，稳态运行速度与入口无关。
+- 真正的体积大头是 285 个 workspace 包的全量依赖树（node_modules 约 1.5 GB），与运行入口形态无关——换成任何 npm 安装形态都省不掉。
+- tsx 壳的唯一成本是进程启动时的一次性转译（约几百 ms）：常驻 systemd 服务只在启动时付一次；CLI 交互命令（如 `dsh plugin add`）每次调用付一次，现阶段无感。
+
+为何不换成全局 CLI / 预编译二进制：harness 不发布 standalone CLI 二进制（`/bin/dsh` 形态不存在）；它唯一的安装产物形态是 npm 包 `@deepseek-ai/dsh`（`bin` 指向 `lib/bin.js`——与 git 源码态同一个 CLI 壳的构建产物）。本仓按 spec 走 git 源码消费（快照可审 + pin 一致性校验），服务器侧 `--frozen-lockfile` 按平台构建已锁死可复现性——与预编译产物想解决的「环境漂移」等价，且不引入第三方分发的信任面。
+
+为何 ExecStart 不直接 `node …/apps/cli/lib/bin.js`（免 tsx 壳）：省下的只是每次启动几百 ms 的转译，对常驻服务无感；`pnpm dsh` 是 harness 根 script 的稳定契约，pin bump 时语义跟随上游，而 lib 直跑是自维护分叉。若将来 CLI 交互调用频率高到在意这开销，再单独评估。
