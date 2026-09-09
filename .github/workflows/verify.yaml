@@ -23,7 +23,7 @@ jobs:
       - name: Check submodule pins match remote stable branches
         run: |
           set -e
-          for pair in "harness master" "plugins/dsh-web main"; do
+          for pair in "harness master" "plugins/dsh-web main" "plugins/dsh-plugin-mineru master"; do
             set -- $pair
             git -C "$1" fetch origin "$2"
             [ "$(git -C "$1" rev-parse HEAD)" = "$(git -C "$1" rev-parse origin/$2)" ] \

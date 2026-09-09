@@ -34,6 +34,7 @@ check_pin() { # $1=path  $2=stable_branch
 }
 check_pin harness master
 check_pin plugins/dsh-web main
+check_pin plugins/dsh-plugin-mineru master
 
 # tag-pin 校验：submodule pin 与远端正式 tag 一致（dsh-better-sidebar 等按 tag 发布的插件仓；
 # tag 存在于远端即已发布，与分支比对的「防本地未推送 commit 被误 pin」同语义）。
