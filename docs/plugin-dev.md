@@ -31,7 +31,7 @@ git commit -m "chore: bump dsh-web pin" && git push
 
 - submodule 默认保持 detached HEAD：主仓只认 pin 的 commit，开发时才切分支。
 - 插件发版（npm publish / tag）由插件仓按自身机制完成，主仓只做 pin 快照，不越界编排。
-- 新插件加入：`git submodule add <repo> plugins/<name>`（目录不存在会自动创建）。
+- 新插件加入：`git submodule add <repo> plugins/<name>`（目录不存在会自动创建），随后 `git -C plugins/<name> checkout --detach` 归一化——`submodule add` 会让新仓停在默认分支上，且 `git submodule update` 在 HEAD 已等于 pin 时会跳过、不会 detach。
 - 要部署到服务器的插件仓必须提交 `pnpm-lock.yaml`：服务器侧构建强制 `--frozen-lockfile`，缺失会部署失败。
 - 插件仓缺 `packageManager` 字段时，本地 `link-plugins.sh` 硬错误退出，而服务器侧 `remote-install.sh` 静默跳过锚点写入——这是有意分歧（本地锚点必须钉住 harness 的 pnpm 版本，缺字段无法确定；服务器侧与其 pnpm 校验同语义，视为可跳过）。
 
@@ -41,3 +41,7 @@ git commit -m "chore: bump dsh-web pin" && git push
 - 主仓提交后 verify CI 报「pin 与 main 不一致」：插件仓的最新 commit 还没 push 到远端 `main`，先 push 插件仓再更新 pin。
 - 本地已 push 插件仓但 CI 仍报 pin 不一致：上游稳定分支已推进过 pin，执行 `git submodule update --remote` 拉到远端最新后重新 `git add plugins/<name>` 提交 pin。
 - 改了插件代码但不生效：确认改的是被 link 挂载的那个包（根包不是挂载入口时改聚合包），并确认 `make dev` 输出里有 `link <包名> <- <路径>`。
+- `make dev` 停在 SQLite ExperimentalWarning、没有 `dsh web: http://127.0.0.1:3080/` 行、3080 无监听：profile 组合树缺 web 宿主。先 `make link-plugins`（其 ensure 步骤会把 `@deepseek-ai/dsh-web-app` 插到 `dsh-base` 之后），再 `cd harness && pnpm dsh --profile dsh --dump-config` 确认树里有 `webserver` 条目。
+- 插件 entry 加载失败、报 `cannot get property "X" without inject`：该服务是在**提供方插件的 fiber 作用域**上解析的，不是调用方——harness 里服务 getter 若捕获 `this.ctx`（如 `connection.rpc`，`harness/packages/client/connection/src/rpc-host.ts:80`），随后 `owner.<service>` 只在提供方 fiber 链上找。**给调用方插件加 `inject` 无效**；应在 `patches/*.yml` 给**提供方 entry** 补 `inject`（样例 `patches/inject-webserver-dsh-connection.yml`，根因见 mineru 手册 §1.8）。注意 patch 的 `inject` 是整表替换，该 entry 原有注入项必须一并列出。
+- 插件仓里直接 `pnpm install` / `pnpm build` 报 pnpm 12.x 或 `MODULE_NOT_FOUND`：该仓没声明 `packageManager`，corepack 向上找不到 pin 回落到了坏版本。改走 harness 目录：`cd harness && pnpm --dir ../plugins/<name> install`（`scripts/setup.sh` 与 `deploy/remote-install.sh` 已把 install 与 build 收敛到同一分支）。
+- 跑完 `make setup` 插件 submodule 变脏（如 mineru 的 `lib/client.js`）：本地重建产物与 pin 自带的产物必然不同（CSS module 类名哈希由绝对源码路径派生）。入口文件已提交在仓内的插件不该本地构建——`setup.sh`/`remote-install.sh` 已按「根 `main` 被 git 跟踪即跳过构建」处理；误改后 `git -C plugins/<name> checkout -- <file>` 还原。
