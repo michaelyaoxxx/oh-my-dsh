@@ -11,6 +11,7 @@
 - 子仓（submodule，固定 commit）：
   - `harness/` ← [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)，稳定分支 `master`
   - `plugins/dsh-web/` ← [zhu1090093659/dsh-web](https://github.com/zhu1090093659/dsh-web)，稳定分支 `main`（注意：该仓默认分支为 `dev`，稳定分支是 `main`）
+  - `plugins/dsh-better-sidebar/` ← [omdsh-dev/DSH-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar)，正式 tag `v0.18.0`（tag pin：pin 正式发布 tag 而非分支 HEAD）
 - 后续插件仓一律以 submodule 加入 `plugins/<name>/`
 
 ### 目标平台（硬约束）
@@ -49,8 +50,8 @@ dsh/                          # 主仓 (superproject, GitHub 私有仓 dsh)
 ├── Makefile                  # 统一入口：setup / dev / deploy / release（薄入口，~20 行）
 ├── harness/                  # [submodule] deepseek-ai/deepseek-harness，pin master
 ├── plugins/
-│   └── dsh-web/              # [submodule] zhu1090093659/dsh-web，pin main
-│                             # 后续插件仓一律放这里
+│   ├── dsh-web/              # [submodule] zhu1090093659/dsh-web，pin main
+│   └── dsh-better-sidebar/   # [submodule] omdsh-dev/DSH-better-sidebar，pin tag v0.18.0
 ├── scripts/                  # 具体实现脚本（Makefile 是薄入口）
 │   ├── setup.sh              # 拉取/更新 submodule + 安装 Node 依赖
 │   ├── link-plugins.sh       # 把 plugins/* 挂载进 DSH profile（开发模式）
@@ -71,12 +72,12 @@ dsh/                          # 主仓 (superproject, GitHub 私有仓 dsh)
 
 ## 3. 环境搭建（本地 macOS M4）
 
-- **运行方式选源码**：harness 本身就是 submodule 源码，本地直接 `pnpm install && pnpm build` 后 `pnpm dsh web` 运行——与 pin 的 commit 严格一致，并为插件联调提供源码。
+- **运行方式选源码**：harness 本身就是 submodule 源码，本地直接 `pnpm install && pnpm build` 后 `pnpm dsh --profile dsh` 运行——与 pin 的 commit 严格一致，并为插件联调提供源码。harness 的 `dsh web` 是 `--profile web` 硬编码别名（boot 官方模板 profile，非本仓挂载目标）；超级仓库统一显式 boot 挂载目标 profile `dsh`（bundles = base + 官方 web 宿主 `@deepseek-ai/dsh-web-app` + 本仓插件，宿主由 link-plugins 幂等 ensure）。
 - `make setup`：
   1. `git submodule update --init --recursive`（对每个插件目录先 `mkdir -p`）
   2. harness：按 harness 仓库 README 安装依赖并构建（pnpm）
   3. 各插件：按插件仓自身的包管理器与 README 安装依赖
-- `make dev`：以 `$DSH_HOME=./.dsh` 启动 DSH Web（默认 `http://127.0.0.1:3080`，支持 `--no-open`），并先经 `link-plugins.sh` 把 `plugins/*` 的包以 link 模式挂进 profile `dsh`（`dsh plugin --profile dsh add link:...`），改插件源码即时生效。
+- `make dev`：以 `$DSH_HOME=./.dsh` 启动 DSH Web（默认 `http://127.0.0.1:3080`，支持 `--no-open`），并先经 `link-plugins.sh` 把 `plugins/*` 的包以 link 模式挂进 profile `dsh`（`dsh plugin --profile dsh add link:...`），改插件源码即时生效。link-plugins.sh 另做三项幂等维护：根目录独立单包仓（外部插件，如 dsh-better-sidebar）豁免「被聚合包依赖即跳过」、单独挂载源码版本；`patches/*.yml`（repo 版用户 patch 片段，如 disable web-ui-better-sidebar）由 `scripts/merge-profile-patch.mjs` 托管合并进 profile 的 cordis.patch.yml；确保官方 web 宿主 bundle 在 bundles 中（base 之后）。
 - Node 版本：以 harness 与插件仓各自的 `package.json` engines / README 为准，`setup.sh` 前置校验版本。
 
 ## 4. 远程部署（Linux x86-64）
@@ -101,7 +102,7 @@ dsh/                          # 主仓 (superproject, GitHub 私有仓 dsh)
 
 ### 手动触发（`make release`，本地执行）
 
-1. `release.sh` 校验：工作区干净；每个 submodule 的 pin 与远端对应分支（harness→master，dsh-web→main）上真实存在的 commit 一致（拦截"本地未推送的 commit 被误 pin"）。
+1. `release.sh` 校验：工作区干净；每个 submodule 的 pin 与远端对应分支（harness→master，dsh-web→main）上真实存在的 commit 一致（拦截"本地未推送的 commit 被误 pin"）；tag-pin 子仓（dsh-better-sidebar→`v0.18.0`）以远端正式 tag 比对（tag 存在于远端即已发布，同语义）。
 2. 生成快照清单：每个 submodule 的名称、pin commit SHA、可读版本号（优先取 pin commit 所在分支可及的最新 tag，无 tag 则取 `package.json` 的 `version`）。
 3. `git tag v<semver>` → `git push origin v<semver>`（只推本次发布 tag）。
 
@@ -111,7 +112,7 @@ dsh/                          # 主仓 (superproject, GitHub 私有仓 dsh)
 
 **`verify.yaml`（push/PR 触发）**：
 
-1. **pin 一致性校验**：同 `release.sh` 的校验逻辑，PR 中 pin 了未推送的 commit 会被拦截。
+1. **pin 一致性校验**：同 `release.sh` 的校验逻辑（含 tag-pin 比对），PR 中 pin 了未推送的 commit 会被拦截。
 2. **冒烟测试**：干净环境 `submodule init --recursive` → `make setup` → 启动 DSH Web（`--no-open`）→ 健康检查 3080 → 退出。CI runner 为 Linux x86-64，与生产服务器同平台。
 
 ## 6. 插件开发工作流（在 submodule 内开发）
