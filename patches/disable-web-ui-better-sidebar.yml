@@ -1,0 +1,6 @@
+# dsh-web-all 的 AUTO-GENERATED 外部行（web-ui-better-sidebar，name dsh-better-sidebar）会经
+# 聚合包依赖带出 registry 版（0.18.0）；源码 submodule（bundle 行 id: better-sidebar）接管后
+# 必须禁用该行，否则同一插件被两个 entry 加载。name 作 mismatch 防护：dsh-web 若改行会 warn。
+- id: web-ui-better-sidebar
+  name: dsh-better-sidebar
+  disabled: true

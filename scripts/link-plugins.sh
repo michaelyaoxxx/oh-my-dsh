@@ -157,7 +157,14 @@ MOUNTED=0
 SKIPPED=()
 for c in "${CANDIDATES[@]}"; do
   name="$(node -p "require('$c/package.json').name")"
-  if printf '%s\n' "$DEP_NAMES" | grep -qxF "$name"; then
+  # 跳过仅适用于「同仓 workspace 子包」：聚合包的 link: 会经其 node_modules 的
+  # workspace 链接带出本地构建。根目录独立候选（外部单包仓，如 dsh-better-sidebar）
+  # 即使被聚合包以 registry 依赖引用（dsh-web-all deps）也必须单独挂载源码版本。
+  in_subdirs=
+  for s in ${SUBDIRS[@]+"${SUBDIRS[@]}"}; do
+    [ "$s" = "$c" ] && in_subdirs=1
+  done
+  if [ -n "$in_subdirs" ] && printf '%s\n' "$DEP_NAMES" | grep -qxF "$name"; then
     SKIPPED+=("$name")
     continue
   fi
@@ -165,6 +172,25 @@ for c in "${CANDIDATES[@]}"; do
   dsh plugin --profile "$PROFILE" add "link:$c"
   MOUNTED=$((MOUNTED + 1))
 done
+
+# patches/*.yml（repo 内 versioned 的用户 patch 片段，如 disable web-ui-better-sidebar）
+# 幂等合并进 profile 的 cordis.patch.yml：挂载结果与托管 patch 同时生效。
+node "$ROOT/scripts/merge-profile-patch.mjs" "$DSH_HOME/profiles/$PROFILE"
+
+# 确保官方 web 宿主在 bundles 列表中（base 之后、插件之前）：profile dsh 是本仓
+# 运行态 profile，宿主与 web 模板一致（@deepseek-ai/dsh-web-app），从安装回退链
+# （$DSH_HOME/profiles/node_modules）解析，无需作为依赖安装。缺失宿主时组合树
+# 没有 webserver，boot 完事件循环空转不绑 3080（集成手册 §1.9）。
+node -e '
+  const fs = require("fs"), p = process.argv[1] + "/package.json"
+  const m = JSON.parse(fs.readFileSync(p, "utf8"))
+  const b = m.dsh?.profile?.bundles ?? []
+  if (!b.includes("@deepseek-ai/dsh-web-app")) {
+    b.splice(b.indexOf("@deepseek-ai/dsh-base") + 1, 0, "@deepseek-ai/dsh-web-app")
+    fs.writeFileSync(p, JSON.stringify(m, null, 2) + "\n")
+    console.log("已确保宿主 bundle @deepseek-ai/dsh-web-app 在 profile bundles（base 之后）")
+  }
+' "$DSH_HOME/profiles/$PROFILE"
 
 [ "${#SKIPPED[@]}" -gt 0 ] && echo "跳过 ${#SKIPPED[@]} 个家族成员（由挂载的聚合包带出本地构建）: ${SKIPPED[*]}"
 echo "完成: 已挂载 ${MOUNTED} 个 bundle 到 profile ${PROFILE}（DSH_HOME=${DSH_HOME}）"
