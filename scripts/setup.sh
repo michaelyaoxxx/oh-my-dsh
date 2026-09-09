@@ -92,31 +92,41 @@ echo "==> 构建 harness"
 # ---------- 5. 各插件：安装依赖 + 构建 ----------
 #    dsh-web 是 pnpm workspace，自带 pnpm-lock.yaml → --frozen-lockfile 可行；
 #    根 package.json 有 build（pnpm -r build）。
+# 无 packageManager 的插件仓（如 dsh-plugin-mineru）corepack 在仓内向上找不到 pin 会回落
+# latest（本机缓存的 12.3.4 已损坏）；统一经 harness 目录解析 harness pin 的 pnpm，--dir 让
+# 命令仍在插件仓内执行（仓内 pnpm-workspace.yaml / lockfile 生效）。install 与 build 同此路径
+# ——按调用点各写一遍判定曾漏掉 build，故收敛成一个入口。
+has_package_manager() {
+  node -e 'const fs=require("fs");process.exit(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).packageManager?0:1)' "$1/package.json"
+}
+plugin_pnpm() {
+  local d="$1"; shift
+  if has_package_manager "$d"; then
+    ( cd "$d" && pnpm "$@" )
+  else
+    echo "==> ${d%/} 无 packageManager，经 harness pin 的 pnpm 执行: pnpm $*"
+    ( cd harness && pnpm --dir "../$d" "$@" )
+  fi
+}
+
 for d in plugins/*/; do
   [ -f "$d/package.json" ] || continue
   echo "==> 安装插件依赖: $d"
-  # 无 packageManager 的插件仓（如 dsh-plugin-mineru）corepack 在仓内向上找不到 pin
-  # 会回落 latest（本机 corepack 缓存的 latest 已坏，必炸）；统一经 harness 目录解析
-  # harness pin 的 pnpm 执行（--dir 让它在插件仓内安装，仓内 pnpm-workspace.yaml 生效）。
-  if node -e 'const fs=require("fs");process.exit(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).packageManager?0:1)' "$d/package.json"; then
-    if [ -f "$d/pnpm-lock.yaml" ]; then
-      ( cd "$d" && pnpm install --frozen-lockfile )
-    else
-      echo "注意: ${d%/} 无 pnpm-lock.yaml，将执行非冻结安装（pnpm install），可能在插件 submodule 内生成或改动文件（如 lockfile）。如需可复现安装，请在插件仓提交 pnpm-lock.yaml。"
-      ( cd "$d" && pnpm install )
-    fi
+  if [ -f "$d/pnpm-lock.yaml" ]; then
+    plugin_pnpm "$d" install --frozen-lockfile
   else
-    echo "==> ${d%/} 无 packageManager，经 harness pin 的 pnpm 安装"
-    if [ -f "$d/pnpm-lock.yaml" ]; then
-      ( cd harness && pnpm --dir "../$d" install --frozen-lockfile )
-    else
-      ( cd harness && pnpm --dir "../$d" install )
-    fi
+    echo "注意: ${d%/} 无 pnpm-lock.yaml，将执行非冻结安装（pnpm install），可能在插件 submodule 内生成或改动文件（如 lockfile）。如需可复现安装，请在插件仓提交 pnpm-lock.yaml。"
+    plugin_pnpm "$d" install
   fi
-  # 该插件是 monorepo 或需构建才可挂载时执行其 build
-  if node -e 'const fs=require("fs");process.exit(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).scripts?.build?0:1)' "$d/package.json" 2>/dev/null; then
+  # 入口文件已提交在仓库内的插件自带构建产物（pin 的一部分）→ 跳过 build：本地重建会因
+  # 绝对路径哈希（如 CSS module 类名）产生与 pin 不同的产物，弄脏 submodule。源码形态的单包
+  # 仓（入口未提交，如 dsh-better-sidebar）与 workspace 根（无 main，如 dsh-web）需要构建。
+  main_entry="$(node -e 'const fs=require("fs");process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).main||"")' "$d/package.json")"
+  if [ -n "$main_entry" ] && git -C "$d" ls-files --error-unmatch "${main_entry#./}" >/dev/null 2>&1; then
+    echo "==> 跳过构建: ${d%/} 入口 ${main_entry} 已提交在仓库内"
+  elif node -e 'const fs=require("fs");process.exit(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).scripts?.build?0:1)' "$d/package.json" 2>/dev/null; then
     echo "==> 构建插件: $d"
-    ( cd "$d" && pnpm build )
+    plugin_pnpm "$d" build
   fi
 done
 
