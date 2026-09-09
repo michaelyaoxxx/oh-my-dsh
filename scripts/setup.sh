@@ -95,11 +95,23 @@ echo "==> 构建 harness"
 for d in plugins/*/; do
   [ -f "$d/package.json" ] || continue
   echo "==> 安装插件依赖: $d"
-  if [ -f "$d/pnpm-lock.yaml" ]; then
-    ( cd "$d" && pnpm install --frozen-lockfile )
+  # 无 packageManager 的插件仓（如 dsh-plugin-mineru）corepack 在仓内向上找不到 pin
+  # 会回落 latest（本机 corepack 缓存的 latest 已坏，必炸）；统一经 harness 目录解析
+  # harness pin 的 pnpm 执行（--dir 让它在插件仓内安装，仓内 pnpm-workspace.yaml 生效）。
+  if node -e 'const fs=require("fs");process.exit(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).packageManager?0:1)' "$d/package.json"; then
+    if [ -f "$d/pnpm-lock.yaml" ]; then
+      ( cd "$d" && pnpm install --frozen-lockfile )
+    else
+      echo "注意: ${d%/} 无 pnpm-lock.yaml，将执行非冻结安装（pnpm install），可能在插件 submodule 内生成或改动文件（如 lockfile）。如需可复现安装，请在插件仓提交 pnpm-lock.yaml。"
+      ( cd "$d" && pnpm install )
+    fi
   else
-    echo "注意: ${d} 无 pnpm-lock.yaml，将执行非冻结安装（pnpm install），可能在插件 submodule 内生成或改动文件（如 lockfile）。如需可复现安装，请在插件仓提交 pnpm-lock.yaml。"
-    ( cd "$d" && pnpm install )
+    echo "==> ${d%/} 无 packageManager，经 harness pin 的 pnpm 安装"
+    if [ -f "$d/pnpm-lock.yaml" ]; then
+      ( cd harness && pnpm --dir "../$d" install --frozen-lockfile )
+    else
+      ( cd harness && pnpm --dir "../$d" install )
+    fi
   fi
   # 该插件是 monorepo 或需构建才可挂载时执行其 build
   if node -e 'const fs=require("fs");process.exit(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).scripts?.build?0:1)' "$d/package.json" 2>/dev/null; then

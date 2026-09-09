@@ -111,7 +111,15 @@ for d in plugins/*/; do
     echo "错误: 插件 ${d%/} 缺少 pnpm-lock.yaml，服务器侧构建要求 --frozen-lockfile 可复现安装。请在插件仓提交 lockfile 后重试。" >&2
     exit 1
   fi
-  ( cd "$d" && pnpm install --frozen-lockfile )
+  # 无 packageManager 的插件仓（如 dsh-plugin-mineru）corepack 回落 latest 不可靠；
+  # 经 harness 目录解析 harness pin 的 pnpm 执行（服务器上 corepack 同样按 harness
+  # packageManager 解析），--dir 让它在插件仓内以 frozen 安装。
+  if node -e 'const fs=require("fs");process.exit(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).packageManager?0:1)' "$d/package.json"; then
+    ( cd "$d" && pnpm install --frozen-lockfile )
+  else
+    echo "==> ${d%/} 无 packageManager，经 harness pin 的 pnpm 安装"
+    ( cd harness && pnpm --dir "../$d" install --frozen-lockfile )
+  fi
   # 该插件是 monorepo 或需构建才可挂载时执行其 build
   if node -e 'const fs=require("fs");process.exit(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).scripts?.build?0:1)' "$d/package.json" 2>/dev/null; then
     echo "==> 构建插件: $d"
