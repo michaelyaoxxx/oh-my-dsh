@@ -28,7 +28,7 @@ make dev       # 启动 DSH Web（$DSH_HOME=./.dsh，插件 link 挂载，改插
 | 目录 | 说明 |
 | --- | --- |
 | `harness/` | DSH 主仓库 submodule（pin `master`） |
-| `plugins/` | 插件 submodule 集合（dsh-web pin `main`），插件默认安装位置 |
+| `plugins/` | 插件 submodule 集合（dsh-web pin `main`、dsh-better-sidebar pin tag `v0.18.0`），插件默认安装位置 |
 | `.dsh/` | DSH 运行主目录（`$DSH_HOME`，运行时生成，gitignore） |
 | `scripts/` | 编排脚本（Makefile 是薄入口） |
 | `deploy/` | systemd unit + 服务器安装脚本 + hosts 模板 |

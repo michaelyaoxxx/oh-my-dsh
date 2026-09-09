@@ -58,7 +58,7 @@ ssh <host> journalctl -u dsh -f          # 日志（权限不足时可加 sudo�
 ssh <host> sudo systemctl restart dsh    # 重启
 ```
 
-unit 名为 `dsh`：以 root 运行，`WorkingDirectory=$DEPLOY_DIR/harness`，`ExecStart=/usr/local/bin/pnpm --dir $DEPLOY_DIR/harness dsh web --no-open`，环境变量 `DSH_HOME=$DEPLOY_DIR/.dsh`、`NODE_ENV=production`，`Restart=on-failure`。unit 由 `remote-install.sh` 按 `$DEPLOY_DIR` 渲染模板（`@DEPLOY_DIR@` 占位符）后安装到 `/etc/systemd/system/dsh.service`。
+unit 名为 `dsh`：以 root 运行，`WorkingDirectory=$DEPLOY_DIR/harness`，`ExecStart=/usr/local/bin/pnpm --dir $DEPLOY_DIR/harness dsh --profile dsh --no-open`，环境变量 `DSH_HOME=$DEPLOY_DIR/.dsh`、`NODE_ENV=production`，`Restart=on-failure`。unit 由 `remote-install.sh` 按 `$DEPLOY_DIR` 渲染模板（`@DEPLOY_DIR@` 占位符）后安装到 `/etc/systemd/system/dsh.service`。
 
 ## 运行形态（为什么是源码态入口，而非全局 CLI / 二进制）
 
@@ -71,3 +71,5 @@ unit 名为 `dsh`：以 root 运行，`WorkingDirectory=$DEPLOY_DIR/harness`，`
 为何不换成全局 CLI / 预编译二进制：harness 不发布 standalone CLI 二进制（`/bin/dsh` 形态不存在）；它唯一的安装产物形态是 npm 包 `@deepseek-ai/dsh`（`bin` 指向 `lib/bin.js`——与 git 源码态同一个 CLI 壳的构建产物）。本仓按 spec 走 git 源码消费（快照可审 + pin 一致性校验），服务器侧 `--frozen-lockfile` 按平台构建已锁死可复现性——与预编译产物想解决的「环境漂移」等价，且不引入第三方分发的信任面。
 
 为何 ExecStart 不直接 `node …/apps/cli/lib/bin.js`（免 tsx 壳）：省下的只是每次启动几百 ms 的转译，对常驻服务无感；`pnpm dsh` 是 harness 根 script 的稳定契约，pin bump 时语义跟随上游，而 lib 直跑是自维护分叉。若将来 CLI 交互调用频率高到在意这开销，再单独评估。
+
+为何显式 `--profile dsh` 而不是 `dsh web`：harness 的 `dsh web` 是 `--profile web` 的硬编码别名，boot 官方模板 web profile（首次使用自动初始化，且只含官方 base + web-app）；而插件挂载目标（link-plugins.sh / remote-install.sh）是 profile `dsh`（本仓的插件与 patch 托管层）。统一显式 boot `dsh` 使「挂载的」与「运行的」是同一个 profile，否则挂载内容永不进入运行实例。

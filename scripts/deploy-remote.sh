@@ -12,7 +12,7 @@
 #   4. 服务器执行 $DEPLOY_DIR/deploy/remote-install.sh（sudo，同一 root 身份），
 #      该脚本顺带按 $DEPLOY_DIR 渲染并安装 dsh.service。
 #   5. systemctl daemon-reload → enable --now → restart。
-#   6. 健康检查：轮询 http://127.0.0.1:3080（服务器本机）。harness 的 dsh web
+#   6. 健康检查：轮询 http://127.0.0.1:3080（服务器本机）。dsh --profile dsh 启动的 web 服务
 #      默认只绑 127.0.0.1（web-app cordis.patch.yml: host 缺省 '127.0.0.1'），
 #      且 --host 0.0.0.0 被 CLI 有意拒绝，故必须服务器侧探测，本地 curl 到
 #      <server>:3080 会恒失败。
