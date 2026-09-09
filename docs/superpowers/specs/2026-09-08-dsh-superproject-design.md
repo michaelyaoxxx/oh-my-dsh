@@ -12,6 +12,7 @@
   - `harness/` ← [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)，稳定分支 `master`
   - `plugins/dsh-web/` ← [zhu1090093659/dsh-web](https://github.com/zhu1090093659/dsh-web)，稳定分支 `main`（注意：该仓默认分支为 `dev`，稳定分支是 `main`）
   - `plugins/dsh-better-sidebar/` ← [omdsh-dev/DSH-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar)，正式 tag `v0.18.0`（tag pin：pin 正式发布 tag 而非分支 HEAD）
+  - `plugins/dsh-plugin-mineru/` ← [HuanLinOTO/dsh-plugin-mineru](https://github.com/HuanLinOTO/dsh-plugin-mineru)，稳定分支 `master`
 - 后续插件仓一律以 submodule 加入 `plugins/<name>/`
 
 ### 目标平台（硬约束）
@@ -51,7 +52,8 @@ dsh/                          # 主仓 (superproject, GitHub 私有仓 dsh)
 ├── harness/                  # [submodule] deepseek-ai/deepseek-harness，pin master
 ├── plugins/
 │   ├── dsh-web/              # [submodule] zhu1090093659/dsh-web，pin main
-│   └── dsh-better-sidebar/   # [submodule] omdsh-dev/DSH-better-sidebar，pin tag v0.18.0
+│   ├── dsh-better-sidebar/   # [submodule] omdsh-dev/DSH-better-sidebar，pin tag v0.18.0
+│   └── dsh-plugin-mineru/    # [submodule] HuanLinOTO/dsh-plugin-mineru，pin master
 ├── scripts/                  # 具体实现脚本（Makefile 是薄入口）
 │   ├── setup.sh              # 拉取/更新 submodule + 安装 Node 依赖
 │   ├── link-plugins.sh       # 把 plugins/* 挂载进 DSH profile（开发模式）
@@ -76,7 +78,7 @@ dsh/                          # 主仓 (superproject, GitHub 私有仓 dsh)
 - `make setup`：
   1. `git submodule update --init --recursive`（对每个插件目录先 `mkdir -p`）
   2. harness：按 harness 仓库 README 安装依赖并构建（pnpm）
-  3. 各插件：按插件仓自身的包管理器与 README 安装依赖
+  3. 各插件：安装依赖并构建。pnpm 按插件仓 `packageManager` 字段解析；未声明该字段的仓（如 dsh-plugin-mineru）经 harness 目录解析 harness pin 的 pnpm（`pnpm --dir`），避免 corepack 向上找不到 pin 而回落 latest。根 `main` 入口已提交在仓内的插件自带构建产物（pin 的一部分），跳过构建——本地重建会因绝对路径派生的产物哈希与 pin 不一致而弄脏 submodule；入口未提交的单包仓与 workspace 根才构建。服务器侧同机制，且强制 `--frozen-lockfile`。
 - `make dev`：以 `$DSH_HOME=./.dsh` 启动 DSH Web（默认 `http://127.0.0.1:3080`，支持 `--no-open`），并先经 `link-plugins.sh` 把 `plugins/*` 的包以 link 模式挂进 profile `dsh`（`dsh plugin --profile dsh add link:...`），改插件源码即时生效。link-plugins.sh 另做三项幂等维护：根目录独立单包仓（外部插件，如 dsh-better-sidebar）豁免「被聚合包依赖即跳过」、单独挂载源码版本；`patches/*.yml`（repo 版用户 patch 片段，如 disable web-ui-better-sidebar）由 `scripts/merge-profile-patch.mjs` 托管合并进 profile 的 cordis.patch.yml；确保官方 web 宿主 bundle 在 bundles 中（base 之后）。
 - Node 版本：以 harness 与插件仓各自的 `package.json` engines / README 为准，`setup.sh` 前置校验版本。
 
@@ -102,7 +104,7 @@ dsh/                          # 主仓 (superproject, GitHub 私有仓 dsh)
 
 ### 手动触发（`make release`，本地执行）
 
-1. `release.sh` 校验：工作区干净；每个 submodule 的 pin 与远端对应分支（harness→master，dsh-web→main）上真实存在的 commit 一致（拦截"本地未推送的 commit 被误 pin"）；tag-pin 子仓（dsh-better-sidebar→`v0.18.0`）以远端正式 tag 比对（tag 存在于远端即已发布，同语义）。
+1. `release.sh` 校验：工作区干净；每个 submodule 的 pin 与远端对应分支（harness→master，dsh-web→main，dsh-plugin-mineru→master）上真实存在的 commit 一致（拦截"本地未推送的 commit 被误 pin"）；tag-pin 子仓（dsh-better-sidebar→`v0.18.0`）以远端正式 tag 比对（tag 存在于远端即已发布，同语义）。
 2. 生成快照清单：每个 submodule 的名称、pin commit SHA、可读版本号（优先取 pin commit 所在分支可及的最新 tag，无 tag 则取 `package.json` 的 `version`）。
 3. `git tag v<semver>` → `git push origin v<semver>`（只推本次发布 tag）。
 
