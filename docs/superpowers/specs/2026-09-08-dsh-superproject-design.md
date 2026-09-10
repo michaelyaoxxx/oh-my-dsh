@@ -11,7 +11,7 @@
 - 子仓（submodule，固定 commit）：
   - `harness/` ← [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)，稳定分支 `master`
   - `plugins/dsh-web/` ← [zhu1090093659/dsh-web](https://github.com/zhu1090093659/dsh-web)，稳定分支 `main`（注意：该仓默认分支为 `dev`，稳定分支是 `main`）
-  - `plugins/dsh-better-sidebar/` ← [omdsh-dev/DSH-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar)，正式 tag `v0.18.0`（tag pin：pin 正式发布 tag 而非分支 HEAD）
+  - `plugins/dsh-better-sidebar/` ← [omdsh-dev/DSH-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar)，正式 tag `v0.18.1`（tag pin：pin 正式发布 tag 而非分支 HEAD）
   - `plugins/dsh-plugin-mineru/` ← [HuanLinOTO/dsh-plugin-mineru](https://github.com/HuanLinOTO/dsh-plugin-mineru)，稳定分支 `master`
 - 后续插件仓一律以 submodule 加入 `plugins/<name>/`
 
@@ -52,7 +52,7 @@ dsh/                          # 主仓 (superproject, GitHub 私有仓 dsh)
 ├── harness/                  # [submodule] deepseek-ai/deepseek-harness，pin master
 ├── plugins/
 │   ├── dsh-web/              # [submodule] zhu1090093659/dsh-web，pin main
-│   ├── dsh-better-sidebar/   # [submodule] omdsh-dev/DSH-better-sidebar，pin tag v0.18.0
+│   ├── dsh-better-sidebar/   # [submodule] omdsh-dev/DSH-better-sidebar，pin tag v0.18.1
 │   └── dsh-plugin-mineru/    # [submodule] HuanLinOTO/dsh-plugin-mineru，pin master
 ├── scripts/                  # 具体实现脚本（Makefile 是薄入口）
 │   ├── setup.sh              # 拉取/更新 submodule + 安装 Node 依赖
@@ -104,7 +104,7 @@ dsh/                          # 主仓 (superproject, GitHub 私有仓 dsh)
 
 ### 手动触发（`make release`，本地执行）
 
-1. `release.sh` 校验：工作区干净；每个 submodule 的 pin 与远端对应分支（harness→master，dsh-web→main，dsh-plugin-mineru→master）上真实存在的 commit 一致（拦截"本地未推送的 commit 被误 pin"）；tag-pin 子仓（dsh-better-sidebar→`v0.18.0`）以远端正式 tag 比对（tag 存在于远端即已发布，同语义）。
+1. `release.sh` 校验：工作区干净；每个 submodule 的 pin 与远端对应分支（harness→master，dsh-web→main，dsh-plugin-mineru→master）上真实存在的 commit 一致（拦截"本地未推送的 commit 被误 pin"）；tag-pin 子仓（dsh-better-sidebar→`v0.18.1`）以远端正式 tag 比对（tag 存在于远端即已发布，同语义）。
 2. 生成快照清单：每个 submodule 的名称、pin commit SHA、可读版本号（优先取 pin commit 所在分支可及的最新 tag，无 tag 则取 `package.json` 的 `version`）。
 3. `git tag v<semver>` → `git push origin v<semver>`（只推本次发布 tag）。
 

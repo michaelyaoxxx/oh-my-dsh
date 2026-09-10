@@ -6,7 +6,7 @@
 
 - **目标平台**：本地 macOS M4（arm64）；远程服务器 Linux（Ubuntu）x86-64。原生 Node 依赖必须按平台各自构建，严禁跨平台拷贝 `node_modules`。
 - **插件安装位置**：插件默认装在 `plugins/` 目录下（submodule 引入）；目标目录不存在时脚本必须 `mkdir -p` 自动创建。
-- **稳定分支**：harness → `master`；dsh-web → `main`（注意 dsh-web 默认分支是 `dev`，不要 pin `dev`）；dsh-better-sidebar → 正式 tag `v0.18.0`（tag pin；verify.yaml 与 release.sh 以 tag 比对校验）；dsh-plugin-mineru → `master`。
+- **稳定分支**：harness → `master`；dsh-web → `main`（注意 dsh-web 默认分支是 `dev`，不要 pin `dev`）；dsh-better-sidebar → 正式 tag `v0.18.1`（tag pin；verify.yaml 与 release.sh 以 tag 比对校验）；dsh-plugin-mineru → `master`。
 
 ## 工作流
 

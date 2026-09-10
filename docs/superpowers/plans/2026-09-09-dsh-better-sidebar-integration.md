@@ -3,6 +3,12 @@
 > 执行方式：**逐条手动执行**，每步有命令、预期与验证点；每个 commit 在 IDE 中审查后再提交。
 > 可见输出用中文；commit message **不加任何 AI 署名**（含 `Co-Authored-By`）。
 
+## 0a. 附记：pin 升级 v0.18.0 → v0.18.1（2026-09-10）
+
+- 上游 tag `v0.18.1` = commit `146840b`（合并自 release-0.18.1 分支）。集成面核对：`cordis.patch.yml` 与 v0.18.0 **逐字节相同**（mount 行 id/name/guard 不变，`patches/disable-web-ui-better-sidebar.yml` 无需改动）；`dsh.plugin.json` 仅升 version（id `dsh-external/dsh-better-sidebar`、main 不变）；package.json 保持 `packageManager: pnpm@11.8.0`、build 脚本与 `dsh.bundle.patch: ./cordis.patch.yml` 不变，新增 `lint` 脚本与 eslint devDeps；`lib/` 仍未跟踪（照常构建）；peer 仍 `^0.1.2-rc.1`（与 harness pin 兼容面不变）。
+- 升级即：submodule checkout tag → 安装构建（plugin loop 实测 `Done in 10.1s using pnpm v11.8.0`，四个 submodule 均 0 dirty）→ 引用更新（`verify.yaml` tag loop / `release.sh` check_pin_tag / AGENTS / README / spec 的 v0.18.0 → v0.18.1）→ link/dump 验证（entry 与 disable guard 仍在，无 warn）。
+- 注意：`patches/disable-web-ui-better-sidebar.yml` 注释里的「registry 版（0.18.0）」指的是 **dsh-web-all 聚合包带出的 registry 版本**（dsh-web 的 package.json 仍 pin `dsh-better-sidebar@0.18.0`），与源码 submodule 的 pin 是两回事，不随本次升级改动。
+
 ## 0. 已拍板的决策
 
 1. **源码接管**：`dsh-better-sidebar` 以 git submodule 加入 `plugins/dsh-better-sidebar`（源码版本接管 registry 0.18.0 的运行位）。
