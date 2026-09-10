@@ -49,7 +49,9 @@ check_pin_tag() { # $1=path  $2=tag
     echo "错误: ${sub} fetch origin tag ${tag} 失败，无法核对 pin。请检查网络后手动执行: git -C ${sub} fetch origin refs/tags/${tag}" >&2
     exit 1
   fi
-  if ! remote=$(git -C "$sub" rev-parse "${tag}"); then
+  # ^{} 剥离 annotated tag：rev-parse <tag> 对注释标签返回标签对象哈希（≠ commit），
+  # 与 HEAD（commit）比对必假；^{} 对轻量标签是 no-op，两者兼容。
+  if ! remote=$(git -C "$sub" rev-parse "${tag}^{}"); then
     echo "错误: ${sub} 缺少 tag ${tag}，无法核对 pin。请确认远端存在该 tag 并手动执行: git -C ${sub} fetch origin refs/tags/${tag}" >&2
     exit 1
   fi
@@ -60,6 +62,7 @@ check_pin_tag() { # $1=path  $2=tag
   fi
 }
 check_pin_tag plugins/dsh-better-sidebar v0.18.1
+check_pin_tag plugins/modlens v3.26.1
 
 # 3. 版本号
 VERSION="${1:-}"

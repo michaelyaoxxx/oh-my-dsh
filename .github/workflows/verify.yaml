@@ -34,10 +34,11 @@ jobs:
       - name: Check tag-pinned submodules
         run: |
           set -e
-          for pair in "plugins/dsh-better-sidebar v0.18.1"; do
+          for pair in "plugins/dsh-better-sidebar v0.18.1" "plugins/modlens v3.26.1"; do
             set -- $pair
             git -C "$1" fetch origin "refs/tags/$2"
-            [ "$(git -C "$1" rev-parse HEAD)" = "$(git -C "$1" rev-parse "$2")" ] \
+            # ^{} 剥离 annotated tag（rev-parse <tag> 返回标签对象哈希，与 HEAD 的 commit 比对必假）
+            [ "$(git -C "$1" rev-parse HEAD)" = "$(git -C "$1" rev-parse "$2^{}")" ] \
               || { echo "$1 pin 与 tag $2 不一致（可能未推送）"; exit 1; }
           done
       # 1.5 shellcheck 静态检查（本地以 0.11.0 -S style 全绿；CI 固定同版本语义）
