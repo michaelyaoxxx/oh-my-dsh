@@ -35,6 +35,16 @@ git commit -m "chore: bump dsh-web pin" && git push
 - 要部署到服务器的插件仓必须提交 `pnpm-lock.yaml`：服务器侧构建强制 `--frozen-lockfile`，缺失会部署失败。
 - 插件仓缺 `packageManager` 字段时，本地 `link-plugins.sh` 硬错误退出，而服务器侧 `remote-install.sh` 静默跳过锚点写入——这是有意分歧（本地锚点必须钉住 harness 的 pnpm 版本，缺字段无法确定；服务器侧与其 pnpm 校验同语义，视为可跳过）。
 
+## 接入新插件的 checklist（三轮集成固化的流程，setup/link 已自动化大半）
+
+1. **侦察**（clone tag 到 /tmp，别直接加 submodule）：包名；仓形态（单包 / monorepo）；`packageManager` 有无；lockfile 有无；根 `main` 是否被 git 跟踪（决定构建还是跳过）；`dsh.bundle.patch` 是否声明且落在自身目录（决定 link 自动挂载）；entry 怎么用宿主服务——自声明 `export const inject` 或 scoped `ctx.inject` 则无需 patch，getter 捕获 `this.ctx` 则需 patches 补 inject；peer 依赖与 harness pin 的兼容面；entry id 与现有仓（尤其 dsh-web 聚合的 AUTO-GENERATED 行）是否冲突。
+2. **接入**：`git submodule add <repo> plugins/<name>` → `git -C plugins/<name> checkout --detach <pin>`（tag 或分支）→ 主仓 `git add`。
+3. **安装构建**：全部交给 `scripts/setup.sh` 插件循环——`plugin_pnpm`（无 packageManager 经 harness pin）、`plugin_install`（无构建策略声明则 `--ignore-scripts`）、跳过构建判据（入口被跟踪）。验证：跑循环 + `git submodule foreach` 全 0 dirty + 产物存在。
+4. **挂载**：bundle patch 在自身目录即自动挂载；需要禁用/注入时写 `patches/*.yml`（顶层数组、`inject` 整表替换）。
+5. **dump 验证**：`pnpm dsh --profile dsh --dump-config` 出现新 section、inject 全解析、无 warn。
+6. **CI/docs 五处**：`verify.yaml`（分支 loop 或 tag loop）、`release.yaml` 快照清单、`release.sh` `check_pin`/`check_pin_tag`、`AGENTS.md` 稳定分支行、`README.md` plugins 行、spec 子仓清单/目录树/校验行。**tag pin 用 `rev-parse <tag>^{}`**——注释标签直接 rev-parse 返回标签对象哈希，与 HEAD 比对必假。
+7. **收尾**：集成手册（`docs/superpowers/plans/YYYY-MM-DD-<name>-integration.md`）+ 新踩坑按症状补进下方常见问题；提交按 pin / scripts / ci / docs / 手册切分；最后用户跑 `make dev` 做 UI 验收。
+
 ## 常见问题
 
 - `make dev` 报 harness 未构建：先跑一次 `make setup`。
