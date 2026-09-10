@@ -10,3 +10,6 @@
 [submodule "plugins/dsh-plugin-mineru"]
 	path = plugins/dsh-plugin-mineru
 	url = https://github.com/HuanLinOTO/dsh-plugin-mineru.git
+[submodule "plugins/modlens"]
+	path = plugins/modlens
+	url = https://github.com/liustack/modlens.git
