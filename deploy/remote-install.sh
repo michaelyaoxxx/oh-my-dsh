@@ -120,6 +120,44 @@ plugin_pnpm() {
     ( cd harness && pnpm --dir "../$d" "$@" )
   fi
 }
+# 与 scripts/setup.sh 同机制（预判 + 回退双层）：未声明 onlyBuiltDependencies/allowBuilds
+# 的插件仓直接以 --ignore-scripts 安装（先做普通安装会留下 pendingBuilds 状态与
+# approve-builds 脚手架）；声明了策略的仓正常安装，仍被拦截则回退 --ignore-scripts。
+has_build_policy() { # 0 = 插件仓声明了依赖构建放行策略
+  local d="$1"
+  if [ -f "$d/pnpm-workspace.yaml" ] && grep -qE '^\s*(onlyBuiltDependencies|allowBuilds)\s*:' "$d/pnpm-workspace.yaml"; then
+    return 0
+  fi
+  node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));const b=p.pnpm||{};process.exit(b.onlyBuiltDependencies||b.allowBuilds?0:1)' "$d/package.json" 2>/dev/null
+}
+plugin_install() {
+  local d="$1"; shift
+  local errfile ret scaffold_was=0 scaffold_tracked=0
+  if ! has_build_policy "$d"; then
+    echo "==> ${d%/} 未声明可构建依赖（无 onlyBuiltDependencies/allowBuilds），以 --ignore-scripts 安装"
+    plugin_pnpm "$d" install "$@" --ignore-scripts
+    return
+  fi
+  [ -e "$d/pnpm-workspace.yaml" ] && scaffold_was=1
+  git -C "$d" ls-files --error-unmatch pnpm-workspace.yaml >/dev/null 2>&1 && scaffold_tracked=1
+  errfile="$(mktemp)"
+  # ERR_PNPM_IGNORED_BUILDS 打在 stdout 上（stderr 为空），必须合并两流才抓得到。
+  if plugin_pnpm "$d" install "$@" >"$errfile" 2>&1; then
+    rm -f "$errfile"
+    return 0
+  fi
+  ret=$?
+  if ! grep -q "ERR_PNPM_IGNORED_BUILDS" "$errfile"; then
+    rm -f "$errfile"
+    return "$ret"
+  fi
+  rm -f "$errfile"
+  echo "==> ${d%/} 声明了构建策略但仍被 pnpm 拦截，以 --ignore-scripts 重试"
+  plugin_pnpm "$d" install "$@" --ignore-scripts
+  if [ "$scaffold_was" -eq 0 ] && [ "$scaffold_tracked" -eq 0 ] && [ -e "$d/pnpm-workspace.yaml" ]; then
+    rm -f "$d/pnpm-workspace.yaml"
+  fi
+}
 
 for d in plugins/*/; do
   [ -f "$d/package.json" ] || continue
@@ -128,7 +166,7 @@ for d in plugins/*/; do
     echo "错误: 插件 ${d%/} 缺少 pnpm-lock.yaml，服务器侧构建要求 --frozen-lockfile 可复现安装。请在插件仓提交 lockfile 后重试。" >&2
     exit 1
   fi
-  plugin_pnpm "$d" install --frozen-lockfile
+  plugin_install "$d" --frozen-lockfile
   # 入口文件已提交在仓库内的插件自带构建产物（pin 的一部分）→ 跳过 build：本地重建会因
   # 绝对路径哈希（如 CSS module 类名）产生与 pin 不同的产物，弄脏 submodule。源码形态的单包
   # 仓（入口未提交，如 dsh-better-sidebar）与 workspace 根（无 main，如 dsh-web）需要构建。
