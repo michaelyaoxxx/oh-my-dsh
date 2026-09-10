@@ -34,7 +34,7 @@ jobs:
       - name: Check tag-pinned submodules
         run: |
           set -e
-          for pair in "plugins/dsh-better-sidebar v0.18.0"; do
+          for pair in "plugins/dsh-better-sidebar v0.18.1"; do
             set -- $pair
             git -C "$1" fetch origin "refs/tags/$2"
             [ "$(git -C "$1" rev-parse HEAD)" = "$(git -C "$1" rev-parse "$2")" ] \

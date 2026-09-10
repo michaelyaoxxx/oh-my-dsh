@@ -59,7 +59,7 @@ check_pin_tag() { # $1=path  $2=tag
     exit 1
   fi
 }
-check_pin_tag plugins/dsh-better-sidebar v0.18.0
+check_pin_tag plugins/dsh-better-sidebar v0.18.1
 
 # 3. 版本号
 VERSION="${1:-}"
