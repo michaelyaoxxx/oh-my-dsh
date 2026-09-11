@@ -100,26 +100,44 @@ make dev     # 出现 dsh web: http://127.0.0.1:3080/?token=… 即成功
   unpublished Agent 的 ctx 上**已不再提供 `agent` 服务**（全仓搜不到 `provide('agent')`），所以 v0.1.7 的 `const agent = agentCtx.agent` 恒为 `undefined`，随即抛错。
 - **上游状态**：`origin/main`（领先 v0.1.7 共 26 个提交）**仍是旧写法**——这不是「pin 落后」，而是新 harness 带来的真实不兼容，等上游修不可行。
 
-### 4b.2 修复（提交在 submodule 的本地分支）
+### 4b.2 修复（提交在 fork 的适配分支）
+
+上游不含这些适配（`origin/main` 领先 v0.1.7 共 26 个提交仍是旧写法），故走 fork：
 
 ```
+fork：https://github.com/michaelyaoxxx/dsh-automation（upstream remote 指回 titanwings）
 分支：adapt/harness-0.1.5-rc.2
-提交：faef87a  fix(executor): 适配 DSH 的 AgentSetup 第二参数，取代 agentCtx.agent
+  faef87a  fix(executor): 适配 DSH 的 AgentSetup 第二参数，取代 agentCtx.agent
+  a2f60c1  fix(session): 改用 session.snapshotEvents()，取代已移除的 session.events
 ```
 
-改动 `src/executor.ts`（直接用第二参数）、`src/types/dsh.d.ts`（本地声明补 `Agent`，沿用本仓既有的 `declare module` 模式）与重建产物 `lib/index.js`。
+改动 `src/executor.ts` / `src/index.ts`（改用新 API）、`src/types/dsh.d.ts`（本地声明补 `Agent`，沿用本仓既有的 `declare module` 模式）与重建产物 `lib/index.js`。
 
 **产物一致性已验证**：把工作树复制到 /tmp 用 `scripts/build.mjs` 重建，`lib/index.js` 与工作区版本**逐字节一致**；`lib/client.js` 未变（修复只在宿主侧）。
 
-### 4b.3 两个操作后果（实测确认）
+**主仓侧同步**：`.gitmodules` 的 url 改为 fork；pin 指向 `a2f60c1`；`verify.yaml` 与 `release.sh` 把 dsh-automation 从 **tag 校验** 移到 **分支校验**（分支 pin 便于后续继续追加适配，不必每次造新 tag）。
 
-1. **`make setup` 会顶掉这个分支**：它执行 `git submodule update --init --recursive`，把 submodule 检出到 pin 提交（detached）。提交安全留在分支上，但**工作树里的修复失效**。恢复：
-   ```sh
-   git -C plugins/dsh-automation checkout adapt/harness-0.1.5-rc.2
-   ```
-2. **`make release` 会拒绝**：`release.sh:8` 的 `git diff --quiet` 对 submodule gitlink 变化返回非 0（实测退出码 1），报「工作区有未提交修改」。等 fork + push + 更新 pin 后自然消失。
+### 4b.3 剩余断裂点的系统排查（避免打地鼠）
 
-> 这正是 submodule「pin 是显式快照」语义的体现：**主仓 pin ≠ 工作树实际检出的提交**时，一切「干净度」检查都会亮，这是特性不是故障。
+两次断裂都是「加载期正常、执行期才炸」，逐个跑出来代价高。故对插件用到的**整个 harness API 面**做了逐项比对：
+
+| 核对面 | 结果 |
+| --- | --- |
+| 从 harness 包导入的 11 个符号（`createUserMessage`/`defineTool`/`installModelSelection`/`SessionId`/`setApprovalPolicy`/`setSandboxMode`/`WorkspaceId` + 4 个类型） | 全部仍导出 ✓ |
+| ctx 服务方法（`agents.create/get/roots/withoutInitiator`、`agentPresets.mount/composedPreset`、`agentDefaultModel.currentSelection`、`workspaceRegistry.archivedSessionIds/archiveSession/get/resolveByPath`、`sessions.flush`、`tools.register/guard`、`storageDomain.open`、`connection.rpc`） | 全部存在 ✓ |
+| `CreateAgentOptions` 字段、`AgentSetup` 签名 | 匹配 ✓ |
+| Session 成员（`header` 含 `cwd`/`agentPreset`、`requestHeader()`、`seq`、`snapshotEvents()`） | ✓ |
+| Agent 成员（`session`/`ctx`/`id`/`cancel`/`followup`/`whenIdle`） | ✓ |
+| `domain.table()/close()`、workspace `status()/path/attachSession()` | ✓ |
+
+**结论**：已修的两处即完整集合。注意这只覆盖「存在性与签名形状」，语义变化静态查不出——**最终仍以真跑一次自动化为准**。
+
+### 4b.4 操作要点
+
+- `make setup` 的 `git submodule update` 会把 submodule 检出到 pin 提交；因为 pin 现在**就是**分支提交，工作树与 pin 一致，不再有「修复失效」问题。
+- 后续要再追加适配：在分支上提交 → `git push` → 主仓 `git add plugins/dsh-automation` 更新 pin（`verify.yaml` 的分支校验要求 pin 与远端分支一致）。
+
+> 4b.1–4b.3 描述的「本地分支 + 工作树与 pin 不一致」阶段已经结束——fork 落定后主仓 `git status` 干净，`make release` 的干净度检查也恢复通过。
 
 ## 5. 过程记录：集成期遇到的两个问题
 
