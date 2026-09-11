@@ -60,6 +60,13 @@ git commit -m "chore: bump dsh-web pin" && git push
 - `make dev` 报 `listen EADDRINUSE: address already in use 127.0.0.1:3080`：上一次的 DSH 进程还活着。**停掉后台任务只杀 `make` 包装进程，`pnpm dsh … --no-open` 的 `node` 子进程会残留**并继续占端口，容易误判成「新插件导致启动失败」。定位并清理：`lsof -nP -iTCP:3080 -sTCP:LISTEN -t` → `kill <pid>`（确认释放后再启动）。
 - 插件的 `dsh.client.inject` 列了一个**不存在的包**（如 dsh-automation 的 `@deepseek-ai/dsh-client-runtime`）：客户端解析是宽松的——`client/modules/src/client/system.ts` 里 `if (dependency !== undefined)`，**找不到就静默跳过**，不影响加载（boot 图里该名字原样透传给浏览器）。排查客户端插件不生效时，别先怀疑这里；先看 `window.__DSH_BOOT__` 里有没有该条目、以及 `/plugins/??<包名>/client.js` 是否返回 200。
 - **harness 升级后插件「挂载正常、一用就炸」**：harness 的插件 API 会跨版本漂移，而挂载/dump/boot 都属于**加载期**验证，查不出**执行期**的不兼容。实例：dsh-automation v0.1.7 用 `const agent = agentCtx.agent` 取 Agent，但 harness 0.1.5-rc.2 起 `AgentSetup = (agentCtx, agent) => …`，Agent 改走**第二参数**、ctx 上不再有 `agent` 服务，于是每次自动化执行都抛 `automation setup has no scoped Agent`。**处置**：先确认签名（`harness/packages/core/agent/src/index.ts` 的 `AgentSetup` 类型 + `harness/packages/core/agent-loop/src/index.ts` 里 `setup?.(prepared.agent.ctx, prepared.agent)` 的调用），改插件源码后**重建产物**。**教训**：升级 harness 后，接入的插件不能只验「能起来」，要真跑一次主功能。
+- 插件仓**只有 npm 的 `package-lock.json`**（如 dsh-market），没有 `pnpm-lock.yaml`：不要用 pnpm 装——它会**忽略该 lockfile**（版本解析不可复现）并在仓内生成未跟踪的 `pnpm-lock.yaml` **弄脏 submodule**。`setup.sh` / `remote-install.sh` 已按「有 pnpm-lock 走 pnpm，只有 package-lock 走 `npm ci`」自动分支；手工装用 `( cd plugins/<name> && npm ci --ignore-scripts )`。服务器侧同样接受两种 lockfile（都没有才失败）。注意 npm 分支下构建要写 `npm run build`（`plugin_run "$d" run build` 已统一）。
+- **`npm ci` 报 `EBADENGINE` 警告但成功**：传递依赖要求的 Node 版本高于本机（如 rolldown-plugin-dts 要 `^22.18.0 || >=24.11.0`，本机 v24.3.0）。属**警告不阻断**；若随之出现真实构建报错，先把 Node 升到要求的下限再排查。
+- **想验证 boot 但 3080 被自己另一个实例占着**：不要抢占端口、也不要共用同一个 `DSH_HOME`（两个实例并发写同一会话库有风险）。改用 `--port 0`（OS 分配空闲端口）+ 复制一份 `DSH_HOME` 到 /tmp 做隔离实例。**注意**：复制后 profile 的 `node_modules` 里那些**相对路径**符号链接（如 `@linxin666/dsh-client-ui-session-id -> ../../../../../plugins/…`）会断，表现为 `cannot resolve profile bundle "…"`；把副本里的链接重写成指向原目标的绝对路径即可：
+  ```sh
+  cd <原 DSH_HOME>/profiles/dsh/node_modules
+  find . -type l | while read -r l; do tgt=$(realpath "$l") && ln -sfn "$tgt" "/tmp/dsh-verify/profiles/dsh/node_modules/$l"; done
+  ```
 - **插件的修复没法上游、只能在本地背着**（如 dsh-automation 的 `setup` 适配）：在 submodule 内**建分支**提交——submodule 平时处于 detached HEAD，在那里提交虽然也能成 commit，但**没有任何分支指向它**，HEAD 一移动就只剩 reflog 可寻（之后被 gc）。建分支后再提交，恢复与代价：
   ```sh
   git -C plugins/dsh-automation checkout -b adapt/<harness 版本>   # 建分支后提交
