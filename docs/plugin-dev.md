@@ -59,3 +59,12 @@ git commit -m "chore: bump dsh-web pin" && git push
 - 插件仓声明的 `packageManager` 与 harness 不同版本（如 dsh-automation 是 `pnpm@10.32.1`，harness 是 `11.7.0`）：**这是正常的**，不是冲突。corepack 按 cwd 向上解析，在插件目录内自然用插件自己的 pin；`setup.sh`/`remote-install.sh` 的 `plugin_pnpm` 对有 `packageManager` 的仓就在仓内执行，于是各仓各用各的。首次会看到 `! Corepack is about to download …/pnpm-10.32.1.tgz`（需网络）。`check_pnpm` 比对时已剥离 `+sha512…` 后缀。
 - `make dev` 报 `listen EADDRINUSE: address already in use 127.0.0.1:3080`：上一次的 DSH 进程还活着。**停掉后台任务只杀 `make` 包装进程，`pnpm dsh … --no-open` 的 `node` 子进程会残留**并继续占端口，容易误判成「新插件导致启动失败」。定位并清理：`lsof -nP -iTCP:3080 -sTCP:LISTEN -t` → `kill <pid>`（确认释放后再启动）。
 - 插件的 `dsh.client.inject` 列了一个**不存在的包**（如 dsh-automation 的 `@deepseek-ai/dsh-client-runtime`）：客户端解析是宽松的——`client/modules/src/client/system.ts` 里 `if (dependency !== undefined)`，**找不到就静默跳过**，不影响加载（boot 图里该名字原样透传给浏览器）。排查客户端插件不生效时，别先怀疑这里；先看 `window.__DSH_BOOT__` 里有没有该条目、以及 `/plugins/??<包名>/client.js` 是否返回 200。
+- **harness 升级后插件「挂载正常、一用就炸」**：harness 的插件 API 会跨版本漂移，而挂载/dump/boot 都属于**加载期**验证，查不出**执行期**的不兼容。实例：dsh-automation v0.1.7 用 `const agent = agentCtx.agent` 取 Agent，但 harness 0.1.5-rc.2 起 `AgentSetup = (agentCtx, agent) => …`，Agent 改走**第二参数**、ctx 上不再有 `agent` 服务，于是每次自动化执行都抛 `automation setup has no scoped Agent`。**处置**：先确认签名（`harness/packages/core/agent/src/index.ts` 的 `AgentSetup` 类型 + `harness/packages/core/agent-loop/src/index.ts` 里 `setup?.(prepared.agent.ctx, prepared.agent)` 的调用），改插件源码后**重建产物**。**教训**：升级 harness 后，接入的插件不能只验「能起来」，要真跑一次主功能。
+- **插件的修复没法上游、只能在本地背着**（如 dsh-automation 的 `setup` 适配）：在 submodule 内**建分支**提交——submodule 平时处于 detached HEAD，在那里提交虽然也能成 commit，但**没有任何分支指向它**，HEAD 一移动就只剩 reflog 可寻（之后被 gc）。建分支后再提交，恢复与代价：
+  ```sh
+  git -C plugins/dsh-automation checkout -b adapt/<harness 版本>   # 建分支后提交
+  git -C plugins/dsh-automation checkout adapt/<harness 版本>      # make setup 顶掉后恢复
+  ```
+  - `make setup` 会执行 `git submodule update --init --recursive`，把工作树检出到 pin 提交（detached）——**修复在分支上活着，但工作树里失效**，需按上面第二条命令恢复。
+  - 主仓会一直显示 ` M plugins/<name>`，`release.sh` 的干净度检查（`git diff --quiet`，见 `scripts/release.sh:8`）会拒绝发布，直到 fork + push + 更新 pin。
+  - 这是 submodule「pin 是显式快照」语义的正常体现：**pin ≠ 工作树 HEAD 时，所有干净度检查都会亮**。
