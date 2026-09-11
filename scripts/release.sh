@@ -63,6 +63,7 @@ check_pin_tag() { # $1=path  $2=tag
 check_pin_tag harness dsh-v0.1.5-rc.2
 check_pin_tag plugins/dsh-better-sidebar v0.18.1
 check_pin_tag plugins/modlens v3.26.1
+check_pin_tag plugins/dsh-automation v0.1.7
 
 # 3. 版本号
 VERSION="${1:-}"
