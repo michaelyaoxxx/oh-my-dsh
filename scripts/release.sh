@@ -66,6 +66,7 @@ check_pin_tag harness dsh-v0.1.5-rc.2
 check_pin_tag plugins/dsh-better-sidebar v0.18.1
 check_pin_tag plugins/modlens v3.26.1
 check_pin_tag plugins/dsh-market v1.45.1
+check_pin_tag plugins/dsh-agent-teams v0.1.17-rc.1
 
 # 3. 版本号
 VERSION="${1:-}"
