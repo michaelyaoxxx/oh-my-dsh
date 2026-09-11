@@ -13,3 +13,6 @@
 [submodule "plugins/modlens"]
 	path = plugins/modlens
 	url = https://github.com/liustack/modlens.git
+[submodule "plugins/dsh-automation"]
+	path = plugins/dsh-automation
+	url = https://github.com/titanwings/dsh-automation.git
