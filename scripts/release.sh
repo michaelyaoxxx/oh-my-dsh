@@ -34,6 +34,8 @@ check_pin() { # $1=path  $2=stable_branch
 }
 check_pin plugins/dsh-web main
 check_pin plugins/dsh-plugin-mineru master
+# dsh-automation pin 自己 fork 上的适配分支（上游不含 harness 0.1.5-rc.2 所需的适配）
+check_pin plugins/dsh-automation adapt/harness-0.1.5-rc.2
 
 # tag-pin 校验：submodule pin 与远端正式 tag 一致（dsh-better-sidebar 等按 tag 发布的插件仓；
 # tag 存在于远端即已发布，与分支比对的「防本地未推送 commit 被误 pin」同语义）。
@@ -63,7 +65,6 @@ check_pin_tag() { # $1=path  $2=tag
 check_pin_tag harness dsh-v0.1.5-rc.2
 check_pin_tag plugins/dsh-better-sidebar v0.18.1
 check_pin_tag plugins/modlens v3.26.1
-check_pin_tag plugins/dsh-automation v0.1.7
 
 # 3. 版本号
 VERSION="${1:-}"

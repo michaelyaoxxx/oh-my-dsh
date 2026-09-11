@@ -23,7 +23,9 @@ jobs:
       - name: Check submodule pins match remote stable branches
         run: |
           set -e
-          for pair in "plugins/dsh-web main" "plugins/dsh-plugin-mineru master"; do
+          # dsh-automation pin 的是**自己 fork 上的适配分支**（见 README「平台与约定」）：
+          # 上游尚不含 harness 0.1.5-rc.2 所需的适配，故按分支比对而非 tag。
+          for pair in "plugins/dsh-web main" "plugins/dsh-plugin-mineru master" "plugins/dsh-automation adapt/harness-0.1.5-rc.2"; do
             set -- $pair
             git -C "$1" fetch origin "$2"
             [ "$(git -C "$1" rev-parse HEAD)" = "$(git -C "$1" rev-parse origin/$2)" ] \
@@ -34,7 +36,7 @@ jobs:
       - name: Check tag-pinned submodules
         run: |
           set -e
-          for pair in "harness dsh-v0.1.5-rc.2" "plugins/dsh-better-sidebar v0.18.1" "plugins/modlens v3.26.1" "plugins/dsh-automation v0.1.7"; do
+          for pair in "harness dsh-v0.1.5-rc.2" "plugins/dsh-better-sidebar v0.18.1" "plugins/modlens v3.26.1"; do
             set -- $pair
             git -C "$1" fetch origin "refs/tags/$2"
             # ^{} 剥离 annotated tag（rev-parse <tag> 返回标签对象哈希，与 HEAD 的 commit 比对必假）
