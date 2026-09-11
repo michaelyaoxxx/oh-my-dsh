@@ -22,3 +22,6 @@
 [submodule "plugins/dsh-agent-teams"]
 	path = plugins/dsh-agent-teams
 	url = https://github.com/NanmiCoder/dsh-agent-teams.git
+[submodule "plugins/dsh-at-file"]
+	path = plugins/dsh-at-file
+	url = https://github.com/FSMargoo/dsh-at-file.git
