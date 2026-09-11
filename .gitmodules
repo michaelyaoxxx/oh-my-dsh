@@ -15,4 +15,4 @@
 	url = https://github.com/liustack/modlens.git
 [submodule "plugins/dsh-automation"]
 	path = plugins/dsh-automation
-	url = https://github.com/titanwings/dsh-automation.git
+	url = https://github.com/michaelyaoxxx/dsh-automation.git
