@@ -67,6 +67,7 @@ check_pin_tag plugins/dsh-better-sidebar v0.18.1
 check_pin_tag plugins/modlens v3.26.1
 check_pin_tag plugins/dsh-market v1.45.1
 check_pin_tag plugins/dsh-agent-teams v0.1.17-rc.1
+check_pin_tag plugins/dsh-at-file v0.7.0
 
 # 3. 版本号
 VERSION="${1:-}"
