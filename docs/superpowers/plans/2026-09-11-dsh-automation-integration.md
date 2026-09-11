@@ -21,7 +21,7 @@
 3. **宿主 entry 注入的 8 个服务全部实存**（逐一 grep 核证）：`storageDomain` / `agents` / `sessions` / `workspaceRegistry` / `agentDefaultModel` / `agentPresets` / `tools` / `connection`。
 4. **客户端 entry 注入的 4 个服务全部实存**：`slots`（`@deepseek-ai/dsh-client-ui-renderer` 的 `SlotRegistry extends Service`，`registry.ts:134` 的 `super(ctx, 'slots')`）、`locale`（`client/locale/src/client/index.ts:544`）、`connection`（`client/connection/src/client/index.ts:289`）、`sessions`（`packages/api/session-controller/src/client/sessions/service.ts:263`）。
 5. **`dsh.client.inject` 里有一个不存在的包**：`@deepseek-ai/dsh-client-runtime`——harness 全仓（源码 / node_modules / lockfile / profile 解析链）都查无此包；只有名字相近的 `@deepseek-ai/dsh-client-test-runtime`（test-support，另一回事）。插件源码与 bundle 也**从未引用**它（bundle 只 `require("react")` / `require("react/jsx-runtime")`）。
-6. **该悬空项不会导致失败**：客户端解析循环是 `const dependency = this.graphRows.get(packageName); if (dependency !== undefined) await …`（`client/modules/src/client/system.ts:165`）——**找不到就静默跳过**。实测启动图里它原样透传给浏览器（`inject` 数组未做过滤），浏览器侧忽略。
+6. **该悬空项不会导致失败**：客户端解析循环是 `const dependency = this.graphRows.get(packageName); if (dependency !== undefined) await …`（`client/modules/src/client/system.ts:167`，inject 循环；163 行那个是 external 循环）——**找不到就静默跳过**。实测启动图里它原样透传给浏览器（`inject` 数组未做过滤），浏览器侧忽略。
 7. **UI 落点**：客户端把入口注册进 `sidebar.footer.action`（harness `packages/client/ui-sidebar` 声明）与 `conversation.view`（`client-ui-chat` / `client-ui-trajectory` 声明）两个 list 插槽——即 **harness 自带插槽**，非 better-sidebar 提供的私有插槽，因此不依赖 better-sidebar 先加载。
 8. **锁文件**：`pnpm-lock.yaml` 存在（lockfileVersion 9.0，pnpm 10/11 兼容）→ frozen 安装可行。
 9. **engines** `^22.19.0 || >=24.0.0`，与 harness 一致；运行时依赖仅 `luxon` + `zod`，peer `react` 可选。
@@ -81,9 +81,49 @@ make dev     # 出现 dsh web: http://127.0.0.1:3080/?token=… 即成功
 - 页面里 `window.__DSH_BOOT__` 引导图**含** `@dsh-external/dsh-automation` 条目（`inject` 数组含那个悬空包名，原样透传）。
 - 其客户端 bundle 由插件路由实际提供：`/plugins/??@dsh-external/dsh-automation/client.js` → **HTTP 200、98967 字节**、内容为 `window.__ModuleLoader__.load({ id: "@dsh-external/dsh-automation", … })` 协议。
 
-**待用户 UI 验收**：会话视图里的 Automation 入口、侧边栏页脚动作是否渲染并可交互（客户端渲染只能实机确认）。
+**待用户 UI 验收**：会话视图里的 Automation 入口、侧边栏页脚动作是否渲染并可交互（客户端渲染只能实机确认）。**另外必须真实跑一次自动化**——见 §4b：v0.1.7 与新 harness 有一处**只在执行时才暴露**的不兼容，boot 级验证查不出来。
 
-## 5. 过程记录：遇到的两个问题
+## 4b. 运行时缺陷：AgentSetup 第二参数（已在本地分支修复）
+
+### 4b.1 症状与根因
+
+- **症状**：自动化**真正执行**时抛 `Error: automation setup has no scoped Agent`。挂载、dump、boot 全部正常——**启动阶段完全不体现**。
+- **根因**：harness 在 0.1.5-rc.2 起把 Agent 作为 `setup` 回调的**第二参数**传入：
+
+  ```ts
+  // harness/packages/core/agent/src/index.ts:50
+  export type AgentSetup = (agentCtx: Context, agent: Agent) => AgentSetupCommit | …
+  // 调用处 harness/packages/core/agent-loop/src/index.ts:825
+  const setupCommit = await raceAbort(setup?.(prepared.agent.ctx, prepared.agent), prepared.signal, id)
+  ```
+
+  unpublished Agent 的 ctx 上**已不再提供 `agent` 服务**（全仓搜不到 `provide('agent')`），所以 v0.1.7 的 `const agent = agentCtx.agent` 恒为 `undefined`，随即抛错。
+- **上游状态**：`origin/main`（领先 v0.1.7 共 26 个提交）**仍是旧写法**——这不是「pin 落后」，而是新 harness 带来的真实不兼容，等上游修不可行。
+
+### 4b.2 修复（提交在 submodule 的本地分支）
+
+```
+分支：adapt/harness-0.1.5-rc.2
+提交：faef87a  fix(executor): 适配 DSH 的 AgentSetup 第二参数，取代 agentCtx.agent
+```
+
+改动 `src/executor.ts`（直接用第二参数）、`src/types/dsh.d.ts`（本地声明补 `Agent`，沿用本仓既有的 `declare module` 模式）与重建产物 `lib/index.js`。
+
+**产物一致性已验证**：把工作树复制到 /tmp 用 `scripts/build.mjs` 重建，`lib/index.js` 与工作区版本**逐字节一致**；`lib/client.js` 未变（修复只在宿主侧）。
+
+### 4b.3 两个操作后果（实测确认）
+
+1. **`make setup` 会顶掉这个分支**：它执行 `git submodule update --init --recursive`，把 submodule 检出到 pin 提交（detached）。提交安全留在分支上，但**工作树里的修复失效**。恢复：
+   ```sh
+   git -C plugins/dsh-automation checkout adapt/harness-0.1.5-rc.2
+   ```
+2. **`make release` 会拒绝**：`release.sh:8` 的 `git diff --quiet` 对 submodule gitlink 变化返回非 0（实测退出码 1），报「工作区有未提交修改」。等 fork + push + 更新 pin 后自然消失。
+
+> 这正是 submodule「pin 是显式快照」语义的体现：**主仓 pin ≠ 工作树实际检出的提交**时，一切「干净度」检查都会亮，这是特性不是故障。
+
+## 5. 过程记录：集成期遇到的两个问题
+
+> 第三个问题（运行时缺陷）性质不同——它不在集成流程里，而是集成**之后**用真实执行才暴露出来的，单列于 §4b。
 
 ### 5.1 端口被上一次验证的残留进程占用（EADDRINUSE）
 
@@ -95,7 +135,7 @@ make dev     # 出现 dsh web: http://127.0.0.1:3080/?token=… 即成功
 
 ### 5.2 误把「tag 不存在」当结论（沿用上一轮的教训，本轮提前避开）
 
-`git ls-remote --tags` 首次因 `LibreSSL SSL_ERROR_SYSCALL` 失败；重试后才拿到 tags。上一轮 harness 升级的教训（网络抖动 + 命名前缀）在本轮直接命中：重试循环取 tags，并确认 `v0.1.7` 是**注释标签**（`5ae7879` 是 tag 对象、`5ae28f2` 是 commit），故 tag 比对必须用 `rev-parse <tag>^{}`（FAQ 已有此条，CI 早已按此写）。
+`git ls-remote --tags` 首次因 `LibreSSL SSL_ERROR_SYSCALL` 失败；重试后才拿到 tags。上一轮 harness 升级的教训（网络抖动 + 命名前缀）在本轮直接命中：重试循环取 tags，并确认 `v0.1.7` 是**注释标签**（`f7854b9` 是 tag 对象、`5ae28f2` 是 commit），故 tag 比对必须用 `rev-parse <tag>^{}`（FAQ 已有此条，CI 早已按此写）。
 
 ## 6. CI/文档修正
 
@@ -130,9 +170,11 @@ git commit -m "docs(plans): 记录 dsh-automation 集成手册"
 | --- | --- | --- | --- |
 | **pnpm 版本** | 无 `packageManager`（mineru/modlens，走 harness pin 11.7.0）或与 harness 同版本（better-sidebar 11.8.0） | **pnpm@10.32.1**，与 harness 的 11.7.0 不同 | 首次验证「各仓自有 pin」这条设计确实生效：corepack 按本仓字段下载并使用 10.32.1，互不干扰 |
 | **构建产物形态** | mineru 提交 `lib/` 且本地重建会脏化；better-sidebar/modlens 不提交、必须构建 | 提交 `lib/`（含 `lib/types/**`），构建脚本是自写 `scripts/build.mjs`（tsc 产 d.ts + esbuild 打包） | 命中「入口已提交即跳过构建」，不会脏化 |
-| **客户端注入** | modlens 无 inject；better-sidebar 注入 4 个**包**名 | `dsh.client.inject` 里有一个**不存在的包** `@deepseek-ai/dsh-client-runtime` | 客户端对 inject 采用「找不到就跳过」的宽松语义（`system.ts:165`），非致命；若换成严格语义就会成为阻断项 |
+| **客户端注入** | modlens 无 inject；better-sidebar 注入 4 个**包**名 | `dsh.client.inject` 里有一个**不存在的包** `@deepseek-ai/dsh-client-runtime` | 客户端对 inject 采用「找不到就跳过」的宽松语义（`system.ts:167`），非致命；若换成严格语义就会成为阻断项 |
 | **UI 落点** | better-sidebar 自带侧边栏；mineru 走设置页；modlens 走 slots 配置卡 | 注册进 harness 自带的 `conversation.view` / `sidebar.footer.action` 插槽 | 依赖 harness 的插槽契约而非某个插件的私有服务，耦合面更小 |
 | **宿主注入** | mineru/connection 出过「getter 捕获 this.ctx」的坑，需 patch | 8 个服务全部自声明、全部实存 | 无需 patch；也再次印证 FAQ 那条判据（自声明 → 不用补） |
+| **harness API 漂移** | 前几个插件的耦合面（服务名、插槽、bundle 协议）在 0.1.5-rc.2 上未变 | `setup` 回调签名变了（Agent 改走第二参数），v0.1.7 与新 harness **运行时**不兼容 | **首个需要本地分支承载修复的插件**：boot/dump 级验证全绿也查不出来，只有真跑一次才暴露；修复无法上游（上游未修），只能本地分支 + 日后 fork |
+| **pin 与工作树的语义** | pin = 工作树检出的提交，两者一致 | 修复在分支上，**pin(v0.1.7) ≠ 工作树 HEAD(faef87a)** | 主仓显示 ` M plugins/dsh-automation`；`make setup` 会把工作树拉回 pin（修复失效但提交仍在分支上）；`release.sh` 的干净度检查会拒绝 |
 
 ## 8. Commit 汇总（全部无 AI 署名）
 
@@ -143,3 +185,5 @@ git commit -m "docs(plans): 记录 dsh-automation 集成手册"
 | C3 | `docs: 记录 dsh-automation（AGENTS/README/spec）` |
 | C4 | `docs(plugin-dev): 补症状→处置（pnpm 版本分化 / 端口残留 / 悬空 client inject）` |
 | C5 | `docs(plans): 记录 dsh-automation 集成手册` |
+| C6 | 主仓：`docs(plans): 补 dsh-automation 运行时缺陷与本地分支修复（§4b）` |
+| — | submodule 内（不在主仓）：`fix(executor): 适配 DSH 的 AgentSetup 第二参数，取代 agentCtx.agent`（分支 `adapt/harness-0.1.5-rc.2`，`faef87a`） |
