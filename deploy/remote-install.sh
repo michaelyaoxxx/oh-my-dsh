@@ -113,9 +113,9 @@ echo "==> 构建 harness"
 ( cd harness && export CI=true && pnpm install --frozen-lockfile && pnpm build )
 
 # ---------- 4. 各插件：安装依赖 + 构建（服务器平台产物） ----------
-# 服务器侧构建硬性要求 --frozen-lockfile（可复现安装）。此处有意比 scripts/setup.sh
-# 更严格：本地开发允许无 lock 的插件跑普通 install，服务器部署一律要求插件仓提交
-# pnpm-lock.yaml，缺失直接失败（不静默降级为 unfrozen install）。
+# 服务器侧硬性要求可复现安装：pnpm-lock.yaml 走 --frozen-lockfile，package-lock.json
+# 走 npm ci；两者都没有则直接失败（不静默降级为 unfrozen install）。此处有意比
+# scripts/setup.sh 更严格——本地开发允许无 lock 的插件跑普通 install。
 # 无 packageManager 的插件仓（如 dsh-plugin-mineru）corepack 在仓内回落 latest 不可靠；
 # 经 harness 目录解析 harness pin 的 pnpm（服务器上 corepack 同样按 harness packageManager
 # 解析），--dir 让命令仍在插件仓内执行。install 与 build 同此路径——按调用点各写一遍判定
@@ -132,6 +132,17 @@ plugin_pnpm() {
     ( cd harness && pnpm --dir "../$d" "$@" )
   fi
 }
+# 与 scripts/setup.sh 同机制。包管理器选择：仓内有 pnpm-lock.yaml 用 pnpm；只有 npm 的
+# package-lock.json 的仓（如 dsh-market）用 npm ci——两者都是可复现安装，服务器部署同样接受。
+has_npm_lock() { [ -f "$1/package-lock.json" ]; }
+plugin_run() { # 选定包管理器并在插件目录内执行：$1=目录，其余为命令与参数
+  local d="$1"; shift
+  if has_npm_lock "$d"; then
+    ( cd "$d" && npm "$@" )
+  else
+    plugin_pnpm "$d" "$@"
+  fi
+}
 # 与 scripts/setup.sh 同机制（预判 + 回退双层）：未声明 onlyBuiltDependencies/allowBuilds
 # 的插件仓直接以 --ignore-scripts 安装（先做普通安装会留下 pendingBuilds 状态与
 # approve-builds 脚手架）；声明了策略的仓正常安装，仍被拦截则回退 --ignore-scripts。
@@ -142,19 +153,19 @@ has_build_policy() { # 0 = 插件仓声明了依赖构建放行策略
   fi
   node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));const b=p.pnpm||{};process.exit(b.onlyBuiltDependencies||b.allowBuilds?0:1)' "$d/package.json" 2>/dev/null
 }
-plugin_install() {
-  local d="$1"; shift
+plugin_install() { # $1=目录 $2=安装子命令（pnpm 用 install，npm 用 ci），其后为额外参数
+  local d="$1" cmd="$2"; shift 2
   local errfile ret scaffold_was=0 scaffold_tracked=0
   if ! has_build_policy "$d"; then
     echo "==> ${d%/} 未声明可构建依赖（无 onlyBuiltDependencies/allowBuilds），以 --ignore-scripts 安装"
-    plugin_pnpm "$d" install "$@" --ignore-scripts
+    plugin_run "$d" "$cmd" "$@" --ignore-scripts
     return
   fi
   [ -e "$d/pnpm-workspace.yaml" ] && scaffold_was=1
   git -C "$d" ls-files --error-unmatch pnpm-workspace.yaml >/dev/null 2>&1 && scaffold_tracked=1
   errfile="$(mktemp)"
   # ERR_PNPM_IGNORED_BUILDS 打在 stdout 上（stderr 为空），必须合并两流才抓得到。
-  if plugin_pnpm "$d" install "$@" >"$errfile" 2>&1; then
+  if plugin_run "$d" "$cmd" "$@" >"$errfile" 2>&1; then
     rm -f "$errfile"
     return 0
   fi
@@ -165,7 +176,7 @@ plugin_install() {
   fi
   rm -f "$errfile"
   echo "==> ${d%/} 声明了构建策略但仍被 pnpm 拦截，以 --ignore-scripts 重试"
-  plugin_pnpm "$d" install "$@" --ignore-scripts
+  plugin_run "$d" "$cmd" "$@" --ignore-scripts
   if [ "$scaffold_was" -eq 0 ] && [ "$scaffold_tracked" -eq 0 ] && [ -e "$d/pnpm-workspace.yaml" ]; then
     rm -f "$d/pnpm-workspace.yaml"
   fi
@@ -174,11 +185,15 @@ plugin_install() {
 for d in plugins/*/; do
   [ -f "$d/package.json" ] || continue
   echo "==> 安装插件依赖: $d"
-  if [ ! -f "$d/pnpm-lock.yaml" ]; then
-    echo "错误: 插件 ${d%/} 缺少 pnpm-lock.yaml，服务器侧构建要求 --frozen-lockfile 可复现安装。请在插件仓提交 lockfile 后重试。" >&2
+  if [ -f "$d/pnpm-lock.yaml" ]; then
+    plugin_install "$d" install --frozen-lockfile
+  elif has_npm_lock "$d"; then
+    echo "==> ${d%/} 使用 npm（package-lock.json，可复现安装）"
+    plugin_install "$d" ci
+  else
+    echo "错误: 插件 ${d%/} 既无 pnpm-lock.yaml 也无 package-lock.json，服务器侧构建要求可复现安装（--frozen-lockfile / npm ci）。请在插件仓提交 lockfile 后重试。" >&2
     exit 1
   fi
-  plugin_install "$d" --frozen-lockfile
   # 入口文件已提交在仓库内的插件自带构建产物（pin 的一部分）→ 跳过 build：本地重建会因
   # 绝对路径哈希（如 CSS module 类名）产生与 pin 不同的产物，弄脏 submodule。源码形态的单包
   # 仓（入口未提交，如 dsh-better-sidebar）与 workspace 根（无 main，如 dsh-web）需要构建。
@@ -187,7 +202,8 @@ for d in plugins/*/; do
     echo "==> 跳过构建: ${d%/} 入口 ${main_entry} 已提交在仓库内"
   elif node -e 'const fs=require("fs");process.exit(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).scripts?.build?0:1)' "$d/package.json" 2>/dev/null; then
     echo "==> 构建插件: $d"
-    plugin_pnpm "$d" build
+    # run build 而非裸 build：npm 只认 run，pnpm 两者等价
+    plugin_run "$d" run build
   fi
 done
 

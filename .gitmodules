@@ -16,3 +16,6 @@
 [submodule "plugins/dsh-automation"]
 	path = plugins/dsh-automation
 	url = https://github.com/michaelyaoxxx/dsh-automation.git
+[submodule "plugins/dsh-market"]
+	path = plugins/dsh-market
+	url = https://github.com/dsh-market/dsh-market.git

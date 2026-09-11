@@ -121,6 +121,19 @@ plugin_pnpm() {
     ( cd harness && pnpm --dir "../$d" "$@" )
   fi
 }
+# 包管理器选择：优先 pnpm（仓内有 pnpm-lock.yaml，或由 harness pin 兜底）。只有 npm 的
+# package-lock.json 的仓（如 dsh-market，上游工具链就是 npm）改用 npm ci——用 pnpm 会忽略
+# 该 lockfile（版本解析不可复现），并在仓内生成未跟踪的 pnpm-lock.yaml 弄脏 submodule。
+# npm 随 node 分发，不存在 corepack 按 packageManager 解析的回落问题。
+has_npm_lock() { [ -f "$1/package-lock.json" ]; }
+plugin_run() { # 选定包管理器并在插件目录内执行：$1=目录，其余为命令与参数
+  local d="$1"; shift
+  if has_npm_lock "$d"; then
+    ( cd "$d" && npm "$@" )
+  else
+    plugin_pnpm "$d" "$@"
+  fi
+}
 # 依赖构建脚本放行策略：pnpm 11 默认拦截全部依赖构建脚本。声明了
 # onlyBuiltDependencies/allowBuilds 的仓（better-sidebar 的 node-pty 等）正常安装；
 # 未声明的仓（如 modlens）直接以 --ignore-scripts 安装——无声明即无脚本需要执行
@@ -135,19 +148,19 @@ has_build_policy() { # 0 = 插件仓声明了依赖构建放行策略
   fi
   node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));const b=p.pnpm||{};process.exit(b.onlyBuiltDependencies||b.allowBuilds?0:1)' "$d/package.json" 2>/dev/null
 }
-plugin_install() {
-  local d="$1"; shift
+plugin_install() { # $1=目录 $2=安装子命令（pnpm 用 install，npm 用 ci），其后为额外参数
+  local d="$1" cmd="$2"; shift 2
   local errfile ret scaffold_was=0 scaffold_tracked=0
   if ! has_build_policy "$d"; then
     echo "==> ${d%/} 未声明可构建依赖（无 onlyBuiltDependencies/allowBuilds），以 --ignore-scripts 安装"
-    plugin_pnpm "$d" install "$@" --ignore-scripts
+    plugin_run "$d" "$cmd" "$@" --ignore-scripts
     return
   fi
   [ -e "$d/pnpm-workspace.yaml" ] && scaffold_was=1
   git -C "$d" ls-files --error-unmatch pnpm-workspace.yaml >/dev/null 2>&1 && scaffold_tracked=1
   errfile="$(mktemp)"
   # ERR_PNPM_IGNORED_BUILDS 打在 stdout 上（stderr 为空），必须合并两流才抓得到。
-  if plugin_pnpm "$d" install "$@" >"$errfile" 2>&1; then
+  if plugin_run "$d" "$cmd" "$@" >"$errfile" 2>&1; then
     rm -f "$errfile"
     return 0
   fi
@@ -158,7 +171,7 @@ plugin_install() {
   fi
   rm -f "$errfile"
   echo "==> ${d%/} 声明了构建策略但仍被 pnpm 拦截，以 --ignore-scripts 重试"
-  plugin_pnpm "$d" install "$@" --ignore-scripts
+  plugin_run "$d" "$cmd" "$@" --ignore-scripts
   if [ "$scaffold_was" -eq 0 ] && [ "$scaffold_tracked" -eq 0 ] && [ -e "$d/pnpm-workspace.yaml" ]; then
     rm -f "$d/pnpm-workspace.yaml"
   fi
@@ -168,10 +181,13 @@ for d in plugins/*/; do
   [ -f "$d/package.json" ] || continue
   echo "==> 安装插件依赖: $d"
   if [ -f "$d/pnpm-lock.yaml" ]; then
-    plugin_install "$d" --frozen-lockfile
+    plugin_install "$d" install --frozen-lockfile
+  elif has_npm_lock "$d"; then
+    echo "==> ${d%/} 使用 npm（package-lock.json，可复现安装）"
+    plugin_install "$d" ci
   else
-    echo "注意: ${d%/} 无 pnpm-lock.yaml，将执行非冻结安装（pnpm install），可能在插件 submodule 内生成或改动文件（如 lockfile）。如需可复现安装，请在插件仓提交 pnpm-lock.yaml。"
-    plugin_install "$d"
+    echo "注意: ${d%/} 无 pnpm-lock.yaml 也无 package-lock.json，将执行非冻结安装（pnpm install），可能在插件 submodule 内生成或改动文件（如 lockfile）。如需可复现安装，请在插件仓提交 lockfile。"
+    plugin_install "$d" install
   fi
   # 入口文件已提交在仓库内的插件自带构建产物（pin 的一部分）→ 跳过 build：本地重建会因
   # 绝对路径哈希（如 CSS module 类名）产生与 pin 不同的产物，弄脏 submodule。源码形态的单包
@@ -181,7 +197,8 @@ for d in plugins/*/; do
     echo "==> 跳过构建: ${d%/} 入口 ${main_entry} 已提交在仓库内"
   elif node -e 'const fs=require("fs");process.exit(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).scripts?.build?0:1)' "$d/package.json" 2>/dev/null; then
     echo "==> 构建插件: $d"
-    plugin_pnpm "$d" build
+    # run build 而非裸 build：npm 只认 run，pnpm 两者等价
+    plugin_run "$d" run build
   fi
 done
 
