@@ -32,7 +32,6 @@ check_pin() { # $1=path  $2=stable_branch
     exit 1
   fi
 }
-check_pin harness master
 check_pin plugins/dsh-web main
 check_pin plugins/dsh-plugin-mineru master
 
@@ -61,6 +60,7 @@ check_pin_tag() { # $1=path  $2=tag
     exit 1
   fi
 }
+check_pin_tag harness dsh-v0.1.5-rc.2
 check_pin_tag plugins/dsh-better-sidebar v0.18.1
 check_pin_tag plugins/modlens v3.26.1
 
