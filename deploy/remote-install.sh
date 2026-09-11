@@ -49,6 +49,18 @@ if ! command -v corepack >/dev/null 2>&1; then
   exit 1
 fi
 
+# harness 的 pnpm build 需为**服务器平台**编译原生插件（native/system 的 flock Node-API
+# 插件）：需要 C 编译器与 Node 开发头文件。与 scripts/setup.sh 同校验；判定与 build 脚本
+# 一致（头文件相对可执行文件解析）。
+if ! command -v cc >/dev/null 2>&1; then
+  echo "错误: 未找到 C 编译器 cc。harness 构建需为服务器平台编译原生插件：Debian/Ubuntu 执行 apt-get install -y build-essential（musl 发行版需 musl-gcc）。" >&2
+  exit 1
+fi
+if ! node -e 'const {dirname,resolve}=require("node:path");const h=resolve(dirname(process.execPath),"..","include","node","node_api.h");process.exit(require("node:fs").existsSync(h)?0:1)'; then
+  echo "错误: 未找到 Node 开发头文件（node_api.h，位于 node 可执行文件同级的 ../include/node/）。harness 的原生插件构建需要它：请改用自带头文件的 Node 发行版（官方 tarball / fnm / nvm），或另装 nodejs-dev / node-headers。" >&2
+  exit 1
+fi
+
 # ---------- 2. 校验各仓库 pin 的 pnpm 能正确解析（不依赖全局 pnpm） ----------
 # 期望值取自各仓库 package.json 的 packageManager 字段（不硬编码版本号，随 pin 漂移）。
 expected_pnpm() {

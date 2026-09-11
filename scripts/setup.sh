@@ -18,6 +18,19 @@ if ! command -v corepack >/dev/null 2>&1; then
   exit 1
 fi
 
+# harness 的 pnpm build 会先跑 build:native-system（native/system/scripts/build.ts
+# --host-addon-only），为**本机平台**编译 flock 的 Node-API 插件：需要 C 编译器和 Node
+# 开发头文件。缺失时错误发生在构建深处且难以定位，故前置校验并给出可执行处置。
+# 判定与 build 脚本一致：头文件相对可执行文件解析（dirname(process.execPath)/../include/node）。
+if ! command -v cc >/dev/null 2>&1; then
+  echo "错误: 未找到 C 编译器 cc。harness 构建需为本机平台编译原生插件（native/system）：macOS 执行 xcode-select --install；Debian/Ubuntu 安装 build-essential（musl 发行版需 musl-gcc）。" >&2
+  exit 1
+fi
+if ! node -e 'const {dirname,resolve}=require("node:path");const h=resolve(dirname(process.execPath),"..","include","node","node_api.h");process.exit(require("node:fs").existsSync(h)?0:1)'; then
+  echo "错误: 未找到 Node 开发头文件（node_api.h，位于 node 可执行文件同级的 ../include/node/）。harness 的原生插件构建需要它：官方 tarball / fnm / nvm 安装的 Node 自带；部分发行版包需另装 nodejs-dev 或 node-headers。" >&2
+  exit 1
+fi
+
 # ---------- 2. 递归拉取/更新 submodule（插件目录不存在则创建，幂等） ----------
 mkdir -p plugins
 git submodule update --init --recursive
