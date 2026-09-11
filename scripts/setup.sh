@@ -112,10 +112,22 @@ echo "==> 构建 harness"
 has_package_manager() {
   node -e 'const fs=require("fs");process.exit(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).packageManager?0:1)' "$1/package.json"
 }
+# pnpm 11 不再读 package.json 里的 pnpm.overrides（迁到 pnpm-workspace.yaml）。仍把 overrides
+# 写在该位置、又没声明 packageManager 的仓（如 dsh-agent-teams），其 lockfile 由 pnpm 10 生成：
+# pnpm 11 看到的 overrides 为空，frozen 安装被拒（ERR_PNPM_LOCKFILE_CONFIG_MISMATCH），且
+# pnpm run 前的依赖校验会重新触发安装、让 build 也一并失败。此类仓回退用 pnpm 10——
+# corepack 支持 `corepack pnpm@<version>`，无需仓内声明。版本可用 DSH_LEGACY_PNPM 覆盖。
+LEGACY_PNPM="${DSH_LEGACY_PNPM:-10.33.0}"
+has_package_json_overrides() { # 0 = overrides 写在 package.json 的 pnpm 字段（pnpm ≤10 的位置）
+  node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.exit(p.pnpm&&p.pnpm.overrides?0:1)' "$1/package.json" 2>/dev/null
+}
 plugin_pnpm() {
   local d="$1"; shift
   if has_package_manager "$d"; then
     ( cd "$d" && pnpm "$@" )
+  elif has_package_json_overrides "$d"; then
+    echo "==> ${d%/} overrides 写在 package.json（pnpm ≤10 的位置），经 pnpm@${LEGACY_PNPM} 执行: pnpm $*"
+    ( cd "$d" && corepack "pnpm@${LEGACY_PNPM}" "$@" )
   else
     echo "==> ${d%/} 无 packageManager，经 harness pin 的 pnpm 执行: pnpm $*"
     ( cd harness && pnpm --dir "../$d" "$@" )
