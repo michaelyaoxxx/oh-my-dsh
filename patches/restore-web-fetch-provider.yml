@@ -1,0 +1,20 @@
+# dsh-base 的 `web` 行在 0.1.5-rc.2 有**两个** config 键：
+#   searchProvider: deepseek-official
+#   fetchProvider: http
+# 而 modsearch v5.10.2 的 cordis.patch.yml 断言「searchProvider 是该行唯一的 base 键」，
+# 只列了 searchProvider。patch 的 config 是**整表替换**（不是深合并），于是
+# fetchProvider 被抹掉——dump 不报错（静默），今天恰好无害：树里只有 web-fetch-http
+# 一个 fetch provider，按 dsh-web 的契约「未配置且恰好一个可用 provider 时自动选择」
+# 仍能选对。
+#
+# 但这是脆的：一旦出现第二个 fetch provider，取 fetch 会报 WEB_PROVIDER_AMBIGUOUS，
+# 而根因（少了一个键）极难从症状反推。故在本层把整个 config 显式补齐（整表替换，
+# 两个键都必须列）。本层在 profile bundles 之后应用，故能覆盖 modsearch 的 bundle patch。
+#
+# 维护注意：dsh-base 若再给 `web` 行新增 config 键，本 patch 会整表覆盖掉，需同步补列。
+# 与之配对的是 modsearch 插件自身的上游缺陷（其 patch 注释与我们的 harness 版本不符），
+# 修好后本文件即可删除。
+- id: web
+  config:
+    searchProvider: modsearch
+    fetchProvider: http

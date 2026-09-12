@@ -25,3 +25,6 @@
 [submodule "plugins/dsh-at-file"]
 	path = plugins/dsh-at-file
 	url = https://github.com/FSMargoo/dsh-at-file.git
+[submodule "plugins/modsearch"]
+	path = plugins/modsearch
+	url = https://github.com/liustack/modsearch.git
