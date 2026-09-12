@@ -31,12 +31,12 @@ jobs:
             [ "$(git -C "$1" rev-parse HEAD)" = "$(git -C "$1" rev-parse origin/$2)" ] \
               || { echo "$1 pin 与 $2 不一致（可能未推送）"; exit 1; }
           done
-      # 1b. tag-pin 一致性（harness / dsh-better-sidebar / modlens / dsh-market / dsh-agent-teams / dsh-at-file 均 pin
+      # 1b. tag-pin 一致性（harness / dsh-better-sidebar / modlens / dsh-market / dsh-agent-teams / dsh-at-file / modsearch 均 pin
       #     正式发布 tag；tag 存在于远端即已发布，与分支比对的「拦截本地未推送 commit」同语义）
       - name: Check tag-pinned submodules
         run: |
           set -e
-          for pair in "harness dsh-v0.1.5-rc.2" "plugins/dsh-better-sidebar v0.18.1" "plugins/modlens v3.26.1" "plugins/dsh-market v1.45.1" "plugins/dsh-agent-teams v0.1.17-rc.1" "plugins/dsh-at-file v0.7.0"; do
+          for pair in "harness dsh-v0.1.5-rc.2" "plugins/dsh-better-sidebar v0.18.1" "plugins/modlens v3.26.1" "plugins/dsh-market v1.45.1" "plugins/dsh-agent-teams v0.1.17-rc.1" "plugins/dsh-at-file v0.7.0" "plugins/modsearch v5.10.2"; do
             set -- $pair
             git -C "$1" fetch origin "refs/tags/$2"
             # ^{} 剥离 annotated tag（rev-parse <tag> 返回标签对象哈希，与 HEAD 的 commit 比对必假）
