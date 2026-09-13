@@ -13,6 +13,7 @@ make dev       # 启动 DSH Web（$DSH_HOME=./.dsh，插件 link 挂载，改插
 
 - 插件开发：[docs/plugin-dev.md](docs/plugin-dev.md)
 - 远程部署：[docs/deploy.md](docs/deploy.md)
+- 远程访问（在外用手机/另一台电脑）：[docs/remote-access.md](docs/remote-access.md)（含第三方方案尽调 [docs/dsh-remote.md](docs/dsh-remote.md)）
 - 发布快照：`make release VERSION=v0.1.0`（校验 pin → 打 tag 并推送，CI 冒烟通过后生成 GitHub Release）
 - 全部目标：`make help`
 
@@ -32,5 +33,5 @@ make dev       # 启动 DSH Web（$DSH_HOME=./.dsh，插件 link 挂载，改插
 | `.dsh/` | DSH 运行主目录（`$DSH_HOME`，运行时生成，gitignore） |
 | `scripts/` | 编排脚本（Makefile 是薄入口） |
 | `deploy/` | systemd unit + 服务器安装脚本 + hosts 模板 |
-| `docs/` | 部署手册、插件开发指南；`superpowers/specs/` 存设计文档 |
+| `docs/` | 部署手册、插件开发指南、远程访问；`superpowers/specs/` 存设计文档 |
 | `.github/workflows/` | verify（pin 校验 + 冒烟）/ release（tag → GitHub Release） |
