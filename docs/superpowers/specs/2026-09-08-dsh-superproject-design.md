@@ -19,6 +19,7 @@
   - `plugins/dsh-agent-teams/` ← [NanmiCoder/dsh-agent-teams](https://github.com/NanmiCoder/dsh-agent-teams)，正式 tag `v0.1.17-rc.1`（tag pin）
   - `plugins/dsh-at-file/` ← [FSMargoo/dsh-at-file](https://github.com/FSMargoo/dsh-at-file)，正式 tag `v0.7.0`（tag pin）
   - `plugins/modsearch/` ← [liustack/modsearch](https://github.com/liustack/modsearch)，正式 tag `v5.10.2`（tag pin）
+  - `plugins/dsh-tui/` ← [ccch1mneyyy/dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI)，正式 tag `v0.10.1`（tag pin；**终端前端**，与 dsh-web-app 同级——自有 3 个嵌套 submodule，跑在独立 profile，不并入 `dsh`）
 - 后续插件仓一律以 submodule 加入 `plugins/<name>/`
 
 ### 目标平台（硬约束）
@@ -65,7 +66,8 @@ dsh/                          # 主仓 (superproject, GitHub 私有仓 dsh)
 │   ├── dsh-market/            # [submodule] dsh-market/dsh-market，pin tag v1.45.1
 │   ├── dsh-agent-teams/       # [submodule] NanmiCoder/dsh-agent-teams，pin tag v0.1.17-rc.1
 │   ├── dsh-at-file/           # [submodule] FSMargoo/dsh-at-file，pin tag v0.7.0
-│   └── modsearch/             # [submodule] liustack/modsearch，pin tag v5.10.2
+│   ├── modsearch/             # [submodule] liustack/modsearch，pin tag v5.10.2
+│   └── dsh-tui/               # [submodule] ccch1mneyyy/dsh-TUI，pin tag v0.10.1（终端前端，含嵌套 submodule）
 ├── scripts/                  # 具体实现脚本（Makefile 是薄入口）
 │   ├── setup.sh              # 拉取/更新 submodule + 安装 Node 依赖
 │   ├── link-plugins.sh       # 把 plugins/* 挂载进 DSH profile（开发模式）
@@ -116,7 +118,7 @@ dsh/                          # 主仓 (superproject, GitHub 私有仓 dsh)
 
 ### 手动触发（`make release`，本地执行）
 
-1. `release.sh` 校验：工作区干净；分支-pin 子仓（dsh-web→`main`、dsh-plugin-mineru→`master`、dsh-automation→`adapt/harness-0.1.5-rc.2`）的 pin 与远端对应分支上真实存在的 commit 一致（拦截"本地未推送的 commit 被误 pin"）；tag-pin 子仓（harness→`dsh-v0.1.5-rc.2`、dsh-better-sidebar→`v0.18.1`、modlens→`v3.26.1`、dsh-market→`v1.45.1`、dsh-agent-teams→`v0.1.17-rc.1`、dsh-at-file→`v0.7.0`、modsearch→`v5.10.2`）以远端正式 tag 比对（tag 存在于远端即已发布，同语义）。
+1. `release.sh` 校验：工作区干净；分支-pin 子仓（dsh-web→`main`、dsh-plugin-mineru→`master`、dsh-automation→`adapt/harness-0.1.5-rc.2`）的 pin 与远端对应分支上真实存在的 commit 一致（拦截"本地未推送的 commit 被误 pin"）；tag-pin 子仓（harness→`dsh-v0.1.5-rc.2`、dsh-better-sidebar→`v0.18.1`、modlens→`v3.26.1`、dsh-market→`v1.45.1`、dsh-agent-teams→`v0.1.17-rc.1`、dsh-at-file→`v0.7.0`、modsearch→`v5.10.2`、dsh-tui→`v0.10.1`）以远端正式 tag 比对（tag 存在于远端即已发布，同语义）。
 2. 生成快照清单：每个 submodule 的名称、pin commit SHA、可读版本号（优先取 pin commit 所在分支可及的最新 tag，无 tag 则取 `package.json` 的 `version`）。
 3. `git tag v<semver>` → `git push origin v<semver>`（只推本次发布 tag）。
 

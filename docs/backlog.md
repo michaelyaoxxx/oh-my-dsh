@@ -26,6 +26,8 @@
 | B2 | **`plugins/dsh-plugin-mineru` pin 落后上游 7 个提交** | 同上，`pin vs origin/master` = behind 7 | 同上 |
 | B3 | **`make deploy` 从未实际执行过** | 脚本与 systemd unit 已写好，但部署路径**一次都没跑通** | 找一台 Linux x86-64 实跑一遍（注意：原生依赖必须在该平台各自构建） |
 | B4 | **新装插件的 UI 验收未做** | modsearch（搜索 + fetch）、dsh-at-file、dsh-agent-teams、dsh-market、modlens 等挂上了但未逐个走查 | 在 `make dev` 里逐个过主要交互 |
+| B5 | **dsh-TUI 未做 UI 验收** | submodule + pin `v0.10.1` + 独立 profile `tui` 都已就绪，但 `make dev-tui` 需真 TTY，**从未实际启动过 TUI 界面** | `make dev-tui` 跑一次。详见[集成手册](superpowers/plans/2026-09-13-dsh-tui-integration.md) |
+| B6 | **dsh-TUI 的 macOS 路径长度缺陷应报上游** | 其 `scripts/verify-inject-channel.mjs` 用 `os.tmpdir()`，macOS 下 unix socket 路径达 105 字节 > `sun_path` 上限 104 → `listen EINVAL`。本仓已用 `TMPDIR=/tmp` 绕行 | 报给 ccch1mneyyy/dsh-TUI（建议短路径或建 socket 前检查长度） |
 
 ---
 
