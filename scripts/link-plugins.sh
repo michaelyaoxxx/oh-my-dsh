@@ -22,6 +22,12 @@ ROOT="$PWD"
 PROFILE=dsh
 export DSH_HOME="${DSH_HOME:-$ROOT/.dsh}"
 
+# 不挂进本 profile 的包。dsh-tui 是**终端前端**：它与 dsh-web-app 同级（cordis.patch.yml
+# 覆盖 30 个 base 行：system-prompt / llm-deepseek / agent-loop / 工具 / 策略…），两个前端
+# 会抢同一批行。它同样声明了 dsh.bundle.patch，不排除就会被下面的候选收集捞进来挂到
+# profile dsh、把 web 环境弄坏。它跑在独立 profile，见 scripts/link-tui.sh。
+SKIP_MOUNT=(plugins/dsh-tui)
+
 # dsh plugin 在 profile 目录里 spawn `pnpm`，corepack 从该目录向上找
 # packageManager。本仓根没有 package.json，corepack 会回落 latest（pnpm 12.x 的
 # bin 布局与本机 Node 的 corepack 不兼容）。在 $DSH_HOME 放一个只含 packageManager
@@ -65,6 +71,12 @@ SUBDIRS=()
 for d in plugins/*/; do
   [ -f "$d/package.json" ] || continue
   root_dir="${d%/}"
+  _skip=0
+  for _s in ${SKIP_MOUNT[@]+"${SKIP_MOUNT[@]}"}; do [ "$root_dir" = "$_s" ] && _skip=1; done
+  if [ "$_skip" = 1 ]; then
+    echo "==> 跳过挂载: ${root_dir}（终端前端，属独立 profile；见 scripts/link-tui.sh）"
+    continue
+  fi
   # 聚合包经 link: 挂载时 pnpm 不装它的依赖，而 loader 从 profile 目录解析 patch 行
   # 名（如 '@linxin666/dsh-i18n'、'dsh-better-sidebar'）。官方方案是把全家桶链进
   # profiles/node_modules 作解析回退（dsh-web 自带 scripts/link-profile.mjs 写死

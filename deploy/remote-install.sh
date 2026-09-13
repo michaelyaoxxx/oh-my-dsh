@@ -34,6 +34,11 @@ fi
 
 export DSH_HOME="$ROOT/.dsh"
 PROFILE=dsh
+
+# 不挂进本 profile 的包：dsh-tui 是**终端前端**（与 dsh-web-app 同级，cordis.patch.yml
+# 覆盖 30 个 base 行），它同样声明了 dsh.bundle.patch，不排除会被下面的候选收集捞进来
+# 挂到 profile dsh、把 web 环境弄坏。它跑在独立 profile，见 scripts/link-tui.sh。
+SKIP_MOUNT=(plugins/dsh-tui)
 cd "$ROOT"
 [ -f harness/package.json ] || { echo "错误: 未找到 harness/package.json（rsync 内容不完整？）。" >&2; exit 1; }
 
@@ -288,6 +293,12 @@ SUBDIRS=()
 for d in plugins/*/; do
   [ -f "$d/package.json" ] || continue
   root_dir="${d%/}"
+  _skip=0
+  for _s in ${SKIP_MOUNT[@]+"${SKIP_MOUNT[@]}"}; do [ "$root_dir" = "$_s" ] && _skip=1; done
+  if [ "$_skip" = 1 ]; then
+    echo "==> 跳过挂载: ${root_dir}（终端前端，属独立 profile）"
+    continue
+  fi
   # 插件仓若自带 scripts/link-profile.mjs（dsh-web 全家桶解析回退脚本），先按其
   # 官方流程执行，把家族包与外部依赖链进 $DSH_HOME/profiles/node_modules。
   # 该脚本写死 ~/.dsh 约定，用 HOME 重定向到服务器的 DSH_HOME；幂等可重跑。

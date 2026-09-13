@@ -4,7 +4,7 @@ SHELL := /bin/bash
 LOG_DIR := log
 LOG_STAMP := $(shell date +%Y-%m-%d-%H:%M:%S)
 
-.PHONY: setup dev deploy release link-plugins help
+.PHONY: setup dev dev-tui deploy release link-plugins help
 
 help: ## 显示可用目标
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -24,6 +24,11 @@ dev: ## 启动 DSH Web（$DSH_HOME=./.dsh，--no-open 可加）
 	# 环境必然失败；export CI=true 使其跳过 hooks 安装（与 GitHub Actions 全局 CI=true 一致）。
 	# `dsh web` 别名 boot 官方模板 web profile，挂载目标是 dsh，故显式 `--profile dsh`
 	set -o pipefail; { bash scripts/link-plugins.sh && cd harness && DSH_HOME="$(CURDIR)/.dsh" CI=true pnpm dsh --profile dsh --no-open; } 2>&1 | tee $(LOG_DIR)/dev-$(LOG_STAMP).log
+
+dev-tui: ## 启动 DSH TUI（独立 profile tui；终端前端，需真 TTY，故不落盘日志）
+	# 不走 tee：TUI 插件有 TTY 校验，管道会让 stdout 不是 TTY 而启动失败。
+	bash scripts/link-tui.sh
+	cd harness && DSH_HOME="$(CURDIR)/.dsh" CI=true pnpm dsh --profile tui
 
 deploy: ## 部署到远程服务器（读 deploy/hosts）
 	mkdir -p $(LOG_DIR)

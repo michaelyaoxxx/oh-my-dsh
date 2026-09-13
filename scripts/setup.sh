@@ -189,6 +189,11 @@ plugin_install() { # $1=目录 $2=安装子命令（pnpm 用 install，npm 用 c
   fi
 }
 
+# 插件构建统一用短 TMPDIR。macOS 的 os.tmpdir() 是 /var/folders/<长哈希>/T（本次实测
+# 某插件的 unix socket 路径因此达到 105 字节，超过 macOS sun_path 上限 104 → listen EINVAL）。
+# /tmp 在 macOS 与 Linux 都存在且足够短；只作用于插件循环，不动 harness 构建。
+export TMPDIR=/tmp
+
 for d in plugins/*/; do
   [ -f "$d/package.json" ] || continue
   echo "==> 安装插件依赖: $d"
