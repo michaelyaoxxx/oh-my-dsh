@@ -36,7 +36,7 @@ jobs:
       - name: Check tag-pinned submodules
         run: |
           set -e
-          for pair in "harness dsh-v0.1.5-rc.2" "plugins/dsh-better-sidebar v0.18.1" "plugins/modlens v3.26.1" "plugins/dsh-market v1.45.1" "plugins/dsh-agent-teams v0.1.17-rc.1" "plugins/dsh-at-file v0.7.0" "plugins/modsearch v5.10.2"; do
+          for pair in "harness dsh-v0.1.5-rc.2" "plugins/dsh-better-sidebar v0.18.1" "plugins/modlens v3.26.1" "plugins/dsh-market v1.45.1" "plugins/dsh-agent-teams v0.1.17-rc.1" "plugins/dsh-at-file v0.7.0" "plugins/modsearch v5.10.2" "plugins/dsh-tui v0.10.1"; do
             set -- $pair
             git -C "$1" fetch origin "refs/tags/$2"
             # ^{} 剥离 annotated tag（rev-parse <tag> 返回标签对象哈希，与 HEAD 的 commit 比对必假）

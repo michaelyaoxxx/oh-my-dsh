@@ -69,6 +69,7 @@ check_pin_tag plugins/dsh-market v1.45.1
 check_pin_tag plugins/dsh-agent-teams v0.1.17-rc.1
 check_pin_tag plugins/dsh-at-file v0.7.0
 check_pin_tag plugins/modsearch v5.10.2
+check_pin_tag plugins/dsh-tui v0.10.1
 
 # 3. 版本号
 VERSION="${1:-}"
