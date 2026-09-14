@@ -15,3 +15,5 @@ RELEASE_NOTES.md
 
 # make 目标输出日志（setup/dev/deploy/release 等落盘）
 log/
+
+.DS_Store
