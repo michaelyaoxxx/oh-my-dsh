@@ -32,9 +32,13 @@ if ! node -e 'const {dirname,resolve}=require("node:path");const h=resolve(dirna
 fi
 
 # ---------- 2. 递归拉取/更新 submodule（插件目录不存在则创建，幂等） ----------
+# 顺序：**先 sync 再 update**。`git submodule sync` 把 .gitmodules 里的 URL 同步进
+# .git/config；`update --init` 才用该 URL 去拉。反过来的话，当某 submodule 的 URL
+# 刚在 .gitmodules 改过（本仓实际发生过：dsh-automation 改指 fork），update 会先用
+# **旧 URL** 拉取或校验，首次 clone 可能直接失败、已初始化的则白跑一次。
 mkdir -p plugins
-git submodule update --init --recursive
 git submodule sync --recursive
+git submodule update --init --recursive
 
 # ---------- 3. 校验各仓库 pin 的 pnpm 能正确解析 ----------
 # 期望值取自各仓库 package.json 的 packageManager 字段（不硬编码版本号，随 submodule pin 漂移）。

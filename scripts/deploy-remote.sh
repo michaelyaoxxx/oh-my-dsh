@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 # deploy-remote.sh — 把主仓（按 submodule pin）部署到 deploy/hosts 所列服务器（systemd 管理）
 #
+# ⚠️ **非生产（legacy）**：本路径**从未在真实服务器上端到端执行过**（见 docs/backlog.md B3），
+#    且仍以 root 运行服务、应用与状态同目录。生产启用前必须先完成安全评审（见
+#    docs/cicd/05-deployment-runbook.md）。当前仅用于内网验证性部署。
+#
+# 安全约束（本脚本对目标执行 `rsync --delete`，误配不可逆）：
+#   · DEPLOY_DIR 必须在 /opt/ 或 /srv/ 下，且拒绝根目录、父目录跳转、系统目录；
+#   · 服务器侧再验一次目标不是符号链接（防写穿）；
+#   · **状态（$DEPLOY_DIR/.dsh）不参与快照，也不参与回滚**——回滚只退回产物，
+#     永远不覆盖发布期间产生的会话与附件；
+#   · 任一主机失败 → 整批回滚已成功的主机（避免集群混合版本）。
+#
 # 每台服务器流程（spec §4）：
 #   1. 预检：免密 ssh 可达；服务器需有 rsync/curl/systemctl。
 #      node/pnpm/corepack 等工具链重预检由 deploy/remote-install.sh 负责（与
@@ -39,16 +50,61 @@ HOSTS_FILE="${HOSTS_FILE:-deploy/hosts}"
 # 服务器侧所有目标路径都从 DEPLOY_DIR 派生（快照目录取 $DEPLOY_DIR-snapshot）；
 # export 使 deploy/remote-install.sh 能收到同一值（见 install_cmd 的显式传入）。
 DEPLOY_DIR="${DEPLOY_DIR:-/opt/dsh}"
-# 早期校验：该值将进入 rsync 目标、快照路径拼接与服务器侧 sed 模板渲染，
-# 限定安全字符集（字母/数字/._/-），拒绝空白与 |、& 等破坏命令拼接的字符。
+# ── 危险目标硬拒绝（本脚本会对其执行 `rsync --delete`，误配即不可逆）───────────
+# 仅有字符集白名单是不够的：`/`、`..`、`/etc`、`/usr` 用的全是合法字符。
+# 依次拒绝：① 非法字符 ② 空/根/相对路径 ③ 父目录跳转 ④ 系统目录 ⑤ 过浅路径
+#          ⑥ 不在允许前缀下
 case "$DEPLOY_DIR" in
   *[!A-Za-z0-9._/-]*)
-    echo "错误: DEPLOY_DIR（${DEPLOY_DIR}）含不支持的字符（仅允许字母/数字/._/-，不能含空白）。请改用安全路径。" >&2
+    echo "错误: DEPLOY_DIR（${DEPLOY_DIR}）含不支持的字符（仅允许字母/数字/._/-，不能含空白）。" >&2
+    exit 1
+    ;;
+esac
+case "$DEPLOY_DIR" in
+  ""|/|.|./*)
+    echo "错误: DEPLOY_DIR 不得为空、根目录或相对路径（当前：'${DEPLOY_DIR}'）。本脚本对其执行 rsync --delete。" >&2
+    exit 1
+    ;;
+esac
+# 父目录跳转：任何 `..` 段落一律拒绝（含 `a/../b` 这类看似正常的写法——
+# 它在服务器侧展开后可能指向意料之外的位置，不值得为便利承担风险）。
+case "/${DEPLOY_DIR}/" in
+  */../*)
+    echo "错误: DEPLOY_DIR 不得含 '..' 路径段（当前：${DEPLOY_DIR}）。" >&2
+    exit 1
+    ;;
+esac
+# 系统目录：即使写成 /etc/dsh 也拒绝——本脚本用 --delete 覆盖目标，
+# 不允许把系统目录树置于可被整棵覆盖的位置。
+case "$DEPLOY_DIR" in
+  /bin|/bin/*|/sbin|/sbin/*|/lib|/lib/*|/lib64|/lib64/*|/usr|/usr/*|/etc|/etc/*| \
+  /boot|/boot/*|/dev|/dev/*|/proc|/proc/*|/sys|/sys/*|/run|/run/*| \
+  /home|/home/*|/root|/root/*|/var|/var/*)
+    echo "错误: DEPLOY_DIR 不得位于系统目录下（当前：${DEPLOY_DIR}）。请改用 /opt/<name> 或 /srv/<name>。" >&2
+    exit 1
+    ;;
+esac
+# 允许前缀 + 最小深度：必须形如 /opt/<name> 或 /srv/<name>（第三段非空）。
+case "$DEPLOY_DIR" in
+  /opt/?*|/srv/?*)
+    case "$DEPLOY_DIR" in
+      */*/*) ;;
+      *) echo "错误: DEPLOY_DIR 过浅（当前：${DEPLOY_DIR}）。请使用 /opt/<name> 或 /srv/<name> 形式。" >&2
+         exit 1 ;;
+    esac
+    ;;
+  *)
+    echo "错误: DEPLOY_DIR 必须在 /opt/ 或 /srv/ 下（当前：${DEPLOY_DIR}）。这是硬约束：本脚本对目标执行 rsync --delete。" >&2
     exit 1
     ;;
 esac
 SNAPSHOT_DIR="${DEPLOY_DIR}-snapshot"
 export DEPLOY_DIR
+
+# 本次要发布的超级仓库 commit —— 写入服务器侧部署标识，供健康检查比对（见 health_check）。
+# 未在 git 工作区（如从 tarball 部署）时留空，健康检查会退化为「只要有标识即可」的宽松判据。
+LOCAL_SHA="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
+export LOCAL_SHA
 
 DRY_RUN=""
 for arg in "$@"; do
@@ -116,7 +172,14 @@ sync_tree() { # $1=target
 health_check() { # $1=target
   local t="$1" i
   # shellcheck disable=SC2016 # 单引号有意保留 $()/$code 供服务器侧 shell 展开（远端命令字符串）
-  local check_cmd='code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3080/ || true); case "$code" in 200|303|401) exit 0 ;; *) exit 1 ;; esac'
+  # 健康检查 = ① HTTP 就绪 ② 部署标识与预期 SHA 一致。
+  #   ① 200/303/401 任一即视为就绪（harness 对未认证请求返回 401，认证 gate 生效即服务已起）。
+  #   ② 部署标识由本脚本在安装后写入 ${DEPLOY_DIR}/.dsh-deployed（见 mark_deployed），
+  #      比对它可证明**落地的树就是本次要发的那个 commit**——否则「服务起来了」可能
+  #      只是上一次部署的残留进程。
+  #   ⚠️ 局限：这证明的是「磁盘上的树正确」，**不等于**「运行中的进程加载的就是它」——
+  #      后者需要服务自身暴露版本端点（DSH 目前没有，属设计项，不在此假装做到）。
+  local check_cmd='code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3080/ || true); case "$code" in 200|303|401) ;; *) echo "HTTP 未就绪: $code"; exit 1 ;; esac; if [ -f '"${DEPLOY_DIR}"'/.dsh-deployed ]; then got=$(sed -n "s/^sha=//p" '"${DEPLOY_DIR}"'/.dsh-deployed); if [ "$got" != '"${LOCAL_SHA:-}"' ]; then echo "部署标识不符: 磁盘=$got 预期='"${LOCAL_SHA:-}"'"; exit 1; fi; else echo "缺少部署标识 '"${DEPLOY_DIR}"'/.dsh-deployed"; exit 1; fi; exit 0'
   echo "==> 健康检查 http://127.0.0.1:3080（服务器本机轮询，至多 60s；200/303/401 视为就绪）"
   for ((i = 1; i <= 30; i++)); do
     if [ -n "$DRY_RUN" ]; then
@@ -134,15 +197,28 @@ health_check() { # $1=target
   return 1
 }
 
-# 回滚：把 $DEPLOY_DIR-snapshot（上一版本产物，含 node_modules 与 .dsh 运行态）整体
-# rsync 回 $DEPLOY_DIR，恢复上一版本 unit 后 daemon-reload 并重启服务（重启为尽力而为，
-# 失败不影响产物已恢复的结论）。快照内的 deploy/dsh.service 是上一版本模板，
-# 恢复时按当前 DEPLOY_DIR 重新渲染后安装到 /etc/systemd/system/dsh.service。
+# 回滚：把 $DEPLOY_DIR-snapshot（上一版本**产物**）整体 rsync 回 $DEPLOY_DIR，恢复
+# 上一版本 unit 后 daemon-reload 并重启服务（重启为尽力而为，失败不影响产物已恢复的结论）。
+# 快照内的 deploy/dsh.service 是上一版本模板，恢复时按当前 DEPLOY_DIR 重新渲染后安装。
+#
+# **状态不参与回滚**：命令带 `--exclude '.dsh/'`。即使旧快照里含状态（本约束生效前的
+# 快照就是），也绝不覆盖回当前状态——发布期间产生的新会话与附件不能因回滚而丢失。
+# 写部署标识：证明「磁盘上的树 = 本次要发的 commit」。健康检查会比对它。
+# 放在安装之后、重启之前——重启后的健康检查就能立刻用它区分「新版本起来了」
+# 与「旧进程还活着」。
+mark_deployed() { # $1=target
+  local t="$1"
+  [ -n "$LOCAL_SHA" ] || { echo "  （非 git 工作区，跳过部署标识写入）"; return 0; }
+  remote_sudo "$t" "printf 'sha=%s\nts=%s\n' '${LOCAL_SHA}' \"\$(date -u +%Y-%m-%dT%H:%M:%SZ)\" > ${DEPLOY_DIR}/.dsh-deployed"
+}
+
 rollback_one() { # $1=target
   local t="$1"
   echo "==> 回滚 ${t} 到上一版本快照（${SNAPSHOT_DIR}）"
   # 回滚命令存单一变量：dry-run 打印与真实执行同一份内容。
-  local rollback_cmd="rsync -a --delete ${SNAPSHOT_DIR}/ ${DEPLOY_DIR}/ && sed 's|@DEPLOY_DIR@|${DEPLOY_DIR}|g' ${SNAPSHOT_DIR}/deploy/dsh.service > /etc/systemd/system/dsh.service && systemctl daemon-reload && { systemctl restart dsh || true; }"
+  # 回滚同样排除 `$DEPLOY_DIR/.dsh`：即使旧快照里含状态（本版本之前的快照就是），
+  # 也**绝不**把它覆盖回当前状态——这是硬规则（见文件头「状态不参与回滚」）。
+  local rollback_cmd="rsync -a --delete --exclude '.dsh/' ${SNAPSHOT_DIR}/ ${DEPLOY_DIR}/ && sed 's|@DEPLOY_DIR@|${DEPLOY_DIR}|g' ${SNAPSHOT_DIR}/deploy/dsh.service > /etc/systemd/system/dsh.service && systemctl daemon-reload && { systemctl restart dsh || true; }"
   if [ -n "$DRY_RUN" ]; then
     remote_sudo "$t" "$rollback_cmd"
     return 0
@@ -175,11 +251,33 @@ deploy_one() { # $1=target（user@host）
       echo "错误: 服务器 ${target} 缺少 rsync、curl 或 systemctl（同步与健康检查需要）。可执行: sudo apt-get install rsync curl" >&2
       return 1
     }
+    # ---- 1b. 符号链接逃逸防护（服务器侧）----
+    # 本地校验无法知道服务器上目标的实际文件类型：若 ${DEPLOY_DIR} 是一个指向
+    # 别处的符号链接，rsync --delete 会写穿到链接目标（可能是 /etc、/ 等）。
+    # 故在服务器侧再验一次：两个目标都不得是符号链接、也不得经链接解析后改变路径。
+    # 该检查在**快照与同步之前**执行——两者都会对被拒目标造成破坏。
+    # shellcheck disable=SC2029 # 路径为本地派生的常量，按设计在客户端展开
+    if ! ssh "${SSH_OPTS[@]}" "$target" "
+      for p in '${DEPLOY_DIR}' '${SNAPSHOT_DIR}'; do
+        if [ -L \"\$p\" ]; then echo \"拒绝: \$p 是符号链接（rsync --delete 会写穿到链接目标）\"; exit 1; fi
+        if [ -e \"\$p\" ]; then
+          real=\$(readlink -f \"\$p\" 2>/dev/null || echo \"\$p\")
+          if [ \"\$real\" != \"\$p\" ]; then echo \"拒绝: \$p 实际解析为 \$real\"; exit 1; fi
+          case \"\$real\" in /opt/?*|/srv/?*) ;; *) echo \"拒绝: \$p 解析后不在 /opt 或 /srv 下（\$real）\"; exit 1 ;; esac
+        fi
+      done
+    "; then
+      echo "错误: 服务器 ${target} 的目标路径未通过安全校验（见上方服务器侧输出）。部署已中止，未做任何写入。" >&2
+      return 1
+    fi
   fi
 
   # ---- 2. 快照上一版本产物（全新机器跳过；spec §4「部署前快照」）----
   # 服务器侧命令按实际分支打印「已快照」或「无上一版本，跳过快照」，本地不再预打印 banner。
-  if ! remote_sudo "$target" "if [ ! -d ${DEPLOY_DIR} ]; then echo 无上一版本，跳过快照; else rsync -a --delete ${DEPLOY_DIR}/ ${SNAPSHOT_DIR}/ && echo 已快照: ${SNAPSHOT_DIR}; fi"; then
+  # 快照排除 `$DEPLOY_DIR/.dsh`（运行时状态：会话/附件/凭据/插件数据）。
+  # 理由：状态不属于「上一版本产物」，快照它既昂贵又危险——回滚时会把发布期间
+  # 产生的**新**会话与附件一并覆盖回去。状态的生命周期由它自己管理，不由部署编排。
+  if ! remote_sudo "$target" "if [ ! -d ${DEPLOY_DIR} ]; then echo 无上一版本，跳过快照; else rsync -a --delete --exclude '.dsh/' ${DEPLOY_DIR}/ ${SNAPSHOT_DIR}/ && echo 已快照: ${SNAPSHOT_DIR}; fi"; then
     echo "错误: 快照失败（${DEPLOY_DIR} → ${SNAPSHOT_DIR}）。请检查 ${target} 磁盘空间后重试。" >&2
     return 1
   fi
@@ -214,6 +312,13 @@ deploy_one() { # $1=target（user@host）
       return 1
     fi
     rm -f "$install_log"
+  fi
+
+  # ---- 4b. 写部署标识（供随后的健康检查证明「落地的树 = 本次要发的 commit」）----
+  if ! mark_deployed "$target"; then
+    echo "错误: 写部署标识失败（${DEPLOY_DIR}/.dsh-deployed）。健康检查无法证明版本，按失败处理。" >&2
+    rollback_one "$target" || true
+    return 1
   fi
 
   # ---- 5. 启用并重启 systemd 服务（spec §4 第 4 步；unit 已由 remote-install.sh 渲染安装）----
@@ -264,8 +369,15 @@ fi
   exit 1
 }
 
-# 读 hosts：跳过空行与整行 # 注释；格式违规即报错；任一服务器失败即整体报错退出。
+# 读 hosts：跳过空行与整行 # 注释；格式违规即报错。
+#
+# 失败语义：**任一主机失败即回滚本批次内所有已成功的主机**，而不是把它们留在新版本上。
+# 理由：多主机部署面向的是「一组同类服务器」（同一版本、同一套负载均衡）。若第 2 台失败
+# 而第 1 台留在新版本，集群会处于**混合版本**状态——这通常比「整批退回旧版本」更难排查，
+# 且健康检查通过的第 1 台会持续接收流量、放大不一致。故整批一起退。
+# 单主机失败时，deploy_one 内部已自行回滚过该主机；此处再滚一次是幂等的 no-op。
 DEPLOYED=0
+SUCCEEDED=()          # 本批次已成功的主机，用于失败时整批回滚
 while IFS= read -r line; do
   line="${line%$'\r'}"                              # 容忍 Windows 行尾
   line="${line#"${line%%[![:space:]]*}"}"           # 去前导空白
@@ -276,8 +388,26 @@ while IFS= read -r line; do
     echo "错误: ${HOSTS_FILE} 行格式无效: ${line}（每行一台 user@host，参考 deploy/hosts.example）" >&2
     exit 1
   fi
-  deploy_one "$line" || exit 1
-  DEPLOYED=$((DEPLOYED + 1))
+  if deploy_one "$line"; then
+    DEPLOYED=$((DEPLOYED + 1))
+    SUCCEEDED+=("$line")
+    continue
+  fi
+  # ── 本台失败：整批回滚 ──
+  echo "" >&2
+  echo "错误: ${line} 部署失败。" >&2
+  if [ "${#SUCCEEDED[@]}" -gt 0 ]; then
+    echo "本批次已有 ${#SUCCEEDED[@]} 台部署成功，为避免集群混合版本，现整批回滚：" >&2
+    rc_fail=0
+    for h in "${SUCCEEDED[@]}"; do
+      echo "  → 回滚 ${h}" >&2
+      rollback_one "$h" || { echo "    回滚失败，需人工介入: ${h}" >&2; rc_fail=1; }
+    done
+    [ "$rc_fail" -eq 0 ] && echo "整批已回到上一版本。" >&2 || echo "⚠️ 部分主机回滚失败，请登录检查（见上方逐台输出）。" >&2
+  else
+    echo "本批次无已成功主机，无需整批回滚。" >&2
+  fi
+  exit 1
 done < "$HOSTS_FILE"
 
 if [ "$DEPLOYED" -eq 0 ]; then

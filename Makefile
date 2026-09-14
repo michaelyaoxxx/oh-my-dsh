@@ -30,7 +30,7 @@ dev-tui: ## 启动 DSH TUI（独立 profile tui；终端前端，需真 TTY，�
 	bash scripts/link-tui.sh
 	cd harness && DSH_HOME="$(CURDIR)/.dsh" CI=true pnpm dsh --profile tui
 
-deploy: ## 部署到远程服务器（读 deploy/hosts）
+deploy: ## 部署到远程服务器（读 deploy/hosts）；⚠️ 非生产，从未端到端跑通过
 	mkdir -p $(LOG_DIR)
 	set -o pipefail; bash scripts/deploy-remote.sh 2>&1 | tee $(LOG_DIR)/deploy-$(LOG_STAMP).log
 
