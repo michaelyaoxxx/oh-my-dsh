@@ -41,12 +41,16 @@ jobs:
           {
             echo "# Release ${{ github.ref_name }}"
             echo ""
-            for sub in harness plugins/dsh-web plugins/dsh-better-sidebar plugins/dsh-plugin-mineru plugins/modlens plugins/dsh-automation plugins/dsh-market plugins/dsh-agent-teams plugins/dsh-at-file plugins/modsearch plugins/dsh-tui; do
+            # 清单来自 scripts/check-pins.sh --list（与 pin 校验、release.sh 同一事实来源）：
+            # 原先此处硬编码 11 个 submodule，与 release.sh 的 2 行口径不一致；改为枚举后
+            # 两边随新增插件自动对齐。
+            while IFS=$'\t' read -r sub _kind _ref; do
+              [ -n "$sub" ] || continue
               sha=$(git -C "$sub" rev-parse HEAD)
               name=$(basename "$sub")
               ver=$(git -C "$sub" describe --tags --abbrev=0 2>/dev/null || node -p "require('./$sub/package.json').version || '-'" 2>/dev/null || echo "-")
               echo "- $name: \`$sha\` ($ver)"
-            done
+            done < <(bash scripts/check-pins.sh --list)
           } > RELEASE_NOTES.md
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
