@@ -14,7 +14,7 @@ applies-to: dsh 超级仓库（main 分支）
 > **已知前提（用户提供）**：**Jenkins 与 Gerrit 是两台各自独立的物理服务器**。
 > 本文按此前提展开；机器名、地址、规格为占位，**【待定】项需按实际填写**。
 
-配套阅读：[cici_architecture.md](cici_architecture.md)（逻辑架构）、[cicd_engineering.md](cicd_engineering.md)（工程细节）、[../deploy.md](../deploy.md)（DSH 目标服务器部署手册）。
+配套阅读：[cicd_architecture.md](cicd_architecture.md)（逻辑架构）、[cicd_engineering.md](cicd_engineering.md)（工程细节）、[../deploy.md](../deploy.md)（DSH 目标服务器部署手册）。
 
 ---
 
@@ -69,7 +69,7 @@ applies-to: dsh 超级仓库（main 分支）
 
 - **A（Gerrit）与 B（Jenkins）是两台独立物理机**——A 不承担构建，B 不承担评审数据。
 - **C（macOS agent）是必需的，不是可选**：C1/C2 要求原生依赖各平台各自构建，
-  Linux 节点**无法**替代 macOS 节点的验证价值（详见 [cici_architecture.md](cici_architecture.md) §4.2）。
+  Linux 节点**无法**替代 macOS 节点的验证价值（详见 [cicd_architecture.md](cicd_architecture.md) §4.2）。
 - **目标服务器群与 A/B 是不同机器**：它们跑 DSH 服务本身，由 `deploy/hosts` 列出（实测）。
 
 ---
@@ -99,12 +99,12 @@ applies-to: dsh 超级仓库（main 分支）
 | 开发者 Mac | A: Gerrit | HTTPS 8080（或 443 反代） | Web 评审界面 | |
 | A: Gerrit | B: Jenkins | **HTTPS 8080** | Stream Events 推送 | Gerrit 主动推事件；需网络可达 |
 | B: Jenkins | A: Gerrit | SSH 29418 / REST | 拉代码、回写 `Verified` | 用**专用账号**，勿用个人凭据 |
-| B: Jenkins | GitHub | HTTPS 443 | 拉 submodule（§5 见 [cici_architecture.md](cici_architecture.md) §4.1） | **若内网不通，需镜像/代理** |
+| B: Jenkins | GitHub | HTTPS 443 | 拉 submodule（§5 见 [cicd_architecture.md](cicd_architecture.md) §4.1） | **若内网不通，需镜像/代理** |
 | B: Jenkins | 目标服务器群 | **SSH 22**（免密，`BatchMode=yes` 实测） | 部署 | sudo 需免密或部署账号为 root（实测约束） |
 | B: Jenkins | C: macOS agent | SSH 22 或 JNLP | agent 接入 | |
 | 任意 | 目标服务器 3080 | **不通** | — | web 仅绑 `127.0.0.1`，健康检查必须本机（实测） |
 
-> 🔴 **网络可达性是本方案最大的落地风险**（[cici_architecture.md](cici_architecture.md) §9 U2）。
+> 🔴 **网络可达性是本方案最大的落地风险**（[cicd_architecture.md](cicd_architecture.md) §9 U2）。
 > 特别是 **B → GitHub**：若 Jenkins 服务器在纯内网，`make setup` 拉不到 submodule，
 > 必须走 §4.1 的方案 B（镜像）或 C（`insteadOf` 改写）。
 

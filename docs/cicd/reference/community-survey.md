@@ -3,12 +3,12 @@ title: DSH 社区 Jenkins CI/CD 生态调研（参考资料）
 doc-version: 1.0.0
 status: reference
 last-updated: 2026-09-14
-source: 2026-09-13 单文件初稿《DeepSeek Harness 社区 Jenkins CI_CD Pipeline 方案总结报告》的调研部分（该初稿已于 2026-09-14 拆分归档，调研部分逐字迁入本文件，架构部分改写为 ../cici_architecture.md 与 ../cicd_engineering.md）
+source: 2026-09-13 单文件初稿《DeepSeek Harness 社区 Jenkins CI_CD Pipeline 方案总结报告》的调研部分（该初稿已于 2026-09-14 拆分归档，调研部分逐字迁入本文件，架构部分改写为 ../cicd_architecture.md 与 ../cicd_engineering.md）
 ---
 
 > **本文件是参考资料，不是本仓的方案。** 内容为对 DSH 社区 Jenkins 集成生态的调研摘录，
 > 原样保留以便查阅；其中涉及的配置实例、插件清单等**未经本仓验证**。
-> 本仓实际采用的方案见 [../cici_architecture.md](../cici_architecture.md) 与 [../cicd_engineering.md](../cicd_engineering.md)。
+> 本仓实际采用的方案见 [../cicd_architecture.md](../cicd_architecture.md) 与 [../cicd_engineering.md](../cicd_engineering.md)。
 
 ## 一、背景与现状定位
 

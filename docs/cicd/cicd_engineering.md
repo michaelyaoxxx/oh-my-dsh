@@ -11,7 +11,7 @@ applies-to: dsh 超级仓库（main 分支）
 > **标注约定**：**「实测」**= 本仓已存在且核对过；**「设计」**= 目标态，尚未落地；
 > **「踩坑」**= 本仓实际发生过并已定位的问题（这类最有价值，散落各处会重复踩）。
 
-配套阅读：[cici_architecture.md](cici_architecture.md)（总体架构）、[../plugin-dev.md](../plugin-dev.md)（插件开发与常见问题）。
+配套阅读：[cicd_architecture.md](cicd_architecture.md)（总体架构）、[../plugin-dev.md](../plugin-dev.md)（插件开发与常见问题）。
 
 ---
 
@@ -43,9 +43,9 @@ scripts/check-pins.sh --list     # 枚举清单 <path>\t<kind>\t<ref>，供快�
 
 **顺带修掉的一处不一致**：`release.sh` 的快照原先只写 harness + dsh-web **2 行**，
 而 `release.yaml` 写**全部 11 行**。现在两者都从 `--list` 枚举，随新增插件自动对齐
-（即 [cici_architecture.md](cici_architecture.md) §4.4 记录的问题，现已消除）。
+（即 [cicd_architecture.md](cicd_architecture.md) §4.4 记录的问题，现已消除）。
 
-**Jenkins 侧应直接调用它**，不要复制逻辑——这样 [cici_architecture.md](cici_architecture.md) §9 R3
+**Jenkins 侧应直接调用它**，不要复制逻辑——这样 [cicd_architecture.md](cicd_architecture.md) §9 R3
 的「两套规则漂移」风险随之消失。
 
 ## 2. Jenkins 侧（设计）
@@ -125,7 +125,7 @@ pipeline {
 ```
 
 > **保持「部署是显式动作」**（[AGENTS.md](../../AGENTS.md)）：Jenkins 提供**可手动执行**的
-> deploy job（带审计与统一环境），但**不由 merge 自动触发**。见 [cici_architecture.md](cici_architecture.md) §4.5。
+> deploy job（带审计与统一环境），但**不由 merge 自动触发**。见 [cicd_architecture.md](cicd_architecture.md) §4.5。
 
 ### 2.4 release job（设计）
 
@@ -141,7 +141,7 @@ stage('发布') {
 
 > ⚠️ **`release.sh` 第 ⑤ 步强制要求存在名为 `origin` 的远端**（实测，`release.sh:99-104`）。
 > 引入 Gerrit 后 origin 的指向必须重新确认，否则可能把 tag 推到 Gerrit——
-> 见 [cici_architecture.md](cici_architecture.md) §4.3。
+> 见 [cicd_architecture.md](cicd_architecture.md) §4.3。
 
 ### 2.5 Jenkins 插件与凭据（设计）
 
@@ -155,20 +155,20 @@ stage('发布') {
 | **Gerrit Trigger**（`gerrit-trigger`） | 订阅 Gerrit 事件 + 回写标签 | 也可用 **Gerrit Code Review / Gerrit REST** 自行实现，取决于版本兼容性 |
 | **Credentials Binding** | 凭据注入 | 通常随 Pipeline 带 |
 | **SSH Agent** | 部署用的 ssh key | `deploy-remote.sh` 需密钥认证（实测 `BatchMode=yes`） |
-| **Workspace Cleanup** | 清理 workspace | **建议装**：每次 `make setup` 体积很大（见 [deployment.md](deployment.md) §2 的磁盘提示） |
+| **Workspace Cleanup** | 清理 workspace | **建议装**：每次 `make setup` 体积很大（见 [deployment.md](cicd_deployment.md) §2 的磁盘提示） |
 | **Timestamper** | 构建日志加时间戳 | 排查耗时用 |
 
-**凭据清单**（与 [cici_architecture.md](cici_architecture.md) §6.2 对应）：
+**凭据清单**（与 [cicd_architecture.md](cicd_architecture.md) §6.2 对应）：
 
 | credential id（建议） | 类型 | 给谁用 | 注意 |
 | --- | --- | --- | --- |
 | `gerrit-jenkins-ssh` | SSH username with private key | Jenkins → Gerrit 拉代码 / 回写标签 | **专用账号**，勿用个人 key |
 | `dsh-deploy-ssh` | SSH username with private key | `deploy-remote.sh` 连目标服务器 | 目标侧 sudo 需免密或账号为 root（实测约束） |
-| `dsh-release-token` | Secret text（或 SSH key） | `release.sh` 推 tag | 见 [cici_architecture.md](cici_architecture.md) §4.3 的 origin 语义 |
-| `deepseek-api-key` | Secret text | **仅当**引入 `dsh-headless` 时 | 目前不需要（见 [cici_architecture.md](cici_architecture.md) §5） |
+| `dsh-release-token` | Secret text（或 SSH key） | `release.sh` 推 tag | 见 [cicd_architecture.md](cicd_architecture.md) §4.3 的 origin 语义 |
+| `deepseek-api-key` | Secret text | **仅当**引入 `dsh-headless` 时 | 目前不需要（见 [cicd_architecture.md](cicd_architecture.md) §5） |
 
 > ⚠️ **`JENKINS_HOME/secrets/` 必须纳入备份**——它加密上述全部凭据，
-> 丢了要全部重配（见 [deployment.md](deployment.md) §5）。
+> 丢了要全部重配（见 [deployment.md](cicd_deployment.md) §5）。
 
 ---
 
@@ -183,7 +183,7 @@ stage('发布') {
 | Access Rights | 在 `All-Projects` 或目标仓配置；`refs/heads/main` 设 `Submit` 权限 |
 | 标签 | `Code-Review`（人工）、`Verified`（Jenkins 回写）—— 两者齐备才可 submit（G6/G7） |
 | submit 规则 | 建议强制 rebase 到最新（避免 pin 校验基于过期 base 通过） |
-| Stream Events | 供 Jenkins 订阅 `patchset-created` / `change-merged`（[cici_architecture.md](cici_architecture.md) §3.3 ③⑧） |
+| Stream Events | 供 Jenkins 订阅 `patchset-created` / `change-merged`（[cicd_architecture.md](cicd_architecture.md) §3.3 ③⑧） |
 | 推送路径 | `git push origin HEAD:refs/for/main` |
 
 ### 3.1 `.gitmodules` 的 URL 该指向哪（设计，必须先定）
@@ -191,7 +191,7 @@ stage('发布') {
 引入 Gerrit 后 `.gitmodules` 里的 URL **不要改**——11 个 submodule 的上游本就在 GitHub，
 本仓的设计意图就是「superproject 编排上游 pin」。改指向 Gerrit 意味着要镜像全部上游。
 
-**只有当 [cici_architecture.md](cici_architecture.md) §4.1 选了方案 B/C 时**才需要改，
+**只有当 [cicd_architecture.md](cicd_architecture.md) §4.1 选了方案 B/C 时**才需要改，
 届时用 `git config --global url.<镜像>.insteadOf https://github.com/`（方案 C）
 **比改 `.gitmodules` 更好**：不污染仓库内容，且对本地开发与 CI 一致生效。
 
@@ -211,7 +211,7 @@ stage('发布') {
 > **都必须实测验证**，不能假设可用。**这是 P1 阶段的第一优先验证项。**
 
 > 🔴 **最不确定的一点**：Gerrit 与 **git submodule** 的组合。本仓有 11 个 submodule（见
-> [cici_architecture.md](cici_architecture.md) §4.1），而 Gerrit 的 `refs/for/` 工作流对 submodule 的
+> [cicd_architecture.md](cicd_architecture.md) §4.1），而 Gerrit 的 `refs/for/` 工作流对 submodule 的
 > pin 变更评审没有成熟流程。**必须在 P1 阶段专门验证**，不要假设它能像 GitHub 那样工作。
 
 ---
@@ -329,7 +329,7 @@ pnpm 11 已不读 `package.json` 里的 `pnpm.overrides`（迁到 `pnpm-workspac
 | 8 | 挂载 bundle：把可挂载的插件包 link 进 profile `dsh` |
 
 > **第 3/4 步是「服务器平台产物」的落点**——这正是 C2 的体现：本地 macOS 的
-> `node_modules` 在 [cici_architecture.md](cici_architecture.md) §1.4 的 rsync 里被**排除**，依赖全部在服务器侧重装重编。
+> `node_modules` 在 [cicd_architecture.md](cicd_architecture.md) §1.4 的 rsync 里被**排除**，依赖全部在服务器侧重装重编。
 
 **systemd unit 要点**（`deploy/dsh.service`，实测）：`DSH_HOME=@DEPLOY_DIR@/.dsh`、
 `COREPACK_DEFAULT_TO_LATEST=0`、`ExecStart=/usr/local/bin/pnpm --dir @DEPLOY_DIR@/harness dsh --profile dsh --no-open`、
@@ -369,17 +369,17 @@ pnpm 11 已不读 `package.json` 里的 `pnpm.overrides`（迁到 `pnpm-workspac
 | ★1 | **deploy job 与手工 `make deploy` 等价** | 同一 `deploy/hosts`，结果一致（含快照回滚路径） |
 | 2 | origin 语义（§4.3） | `release.sh` 不会把 tag 推到 Gerrit |
 | 3 | 快照口径 | `release.sh` 与 `release.yaml` 出的清单**行数与内容一致**（现均为 11 行，§1.1） |
-| 4 | 发布回滚演练 | 删 tag + 处理 GitHub Release 的流程**实际演练一次**（现无机制，见 [cici_architecture.md](cici_architecture.md) §6.4） |
-| 5 | 凭据备份恢复 | `JENKINS_HOME/secrets/` 恢复后凭据可用（[deployment.md](deployment.md) §5） |
+| 4 | 发布回滚演练 | 删 tag + 处理 GitHub Release 的流程**实际演练一次**（现无机制，见 [cicd_architecture.md](cicd_architecture.md) §6.4） |
+| 5 | 凭据备份恢复 | `JENKINS_HOME/secrets/` 恢复后凭据可用（[deployment.md](cicd_deployment.md) §5） |
 
 ---
 
-## 9. 待补齐（与 [cici_architecture.md](cici_architecture.md) §9 对应）
+## 9. 待补齐（与 [cicd_architecture.md](cicd_architecture.md) §9 对应）
 
 | 事项 | 归属 |
 | --- | --- |
 | ~~`scripts/check-pins.sh` 抽出并三处共用~~ | ✅ **2026-09-14 已完成**（见 §1.1） |
 | ~~统一发布快照口径~~ | ✅ **2026-09-14 已完成**（两者均改为枚举 `--list`，见 §1.1） |
 | Gerrit + submodule 的评审流程实测 | 风险，P1 阶段 |
-| macos-arm64 Jenkins 节点 | 未决，[cici_architecture.md](cici_architecture.md) §9 U1 |
-| Jenkins 双节点构建耗时实测（决定是否只在 PR 上跑双平台） | 未决，[cici_architecture.md](cici_architecture.md) §9 R2 |
+| macos-arm64 Jenkins 节点 | 未决，[cicd_architecture.md](cicd_architecture.md) §9 U1 |
+| Jenkins 双节点构建耗时实测（决定是否只在 PR 上跑双平台） | 未决，[cicd_architecture.md](cicd_architecture.md) §9 R2 |
