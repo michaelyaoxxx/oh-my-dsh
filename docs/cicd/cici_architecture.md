@@ -140,6 +140,11 @@ submit 规则（可强制「Verified 由 Jenkins 打」「必须 rebase 到最�
 
 ## 3. 目标架构（to-be，设计）
 
+### 3.1 架构图（逻辑）
+
+> **本文只画逻辑架构**；**物理部署**（两台独立物理服务器、agent 位置、网络与端口、安装顺序）
+> 见 [deployment.md](deployment.md)。两者的关系：本节说「谁负责什么」，那份说「跑在哪台机器上」。
+
 ### 3.1 架构图
 
 ```
@@ -175,6 +180,15 @@ submit 规则（可强制「Verified 由 Jenkins 打」「必须 rebase 到最�
   (deploy/hosts)     (tag / Release)
   systemd 托管
 ```
+
+**上图的物理落点**（详见 [deployment.md](deployment.md) §1）：
+
+| 逻辑组件 | 物理位置 |
+| --- | --- |
+| Gerrit | **物理服务器 A**（独立） |
+| Jenkins controller + `linux-x86_64` 节点 | **物理服务器 B**（独立，controller 本机即 linux 节点） |
+| `macos-arm64` 节点 | **物理机 C**（Apple Silicon，必需——C1/C2 见 §4.2） |
+| 目标服务器群 | `deploy/hosts` 所列机器（与 A/B/C 不同） |
 
 ### 3.2 角色划分
 
@@ -275,7 +289,133 @@ Jenkins 提供**可执行的 deploy job**（带审计与统一环境），但**�
 
 ---
 
-## 5. 与现有资产的复用关系
+## 5. 与 DSH 生态工具的关系
+
+### 5.1 先分清两个方向
+
+社区调研（[reference/community-survey.md](reference/community-survey.md) §四）里的工具，
+绝大多数指向的是**「把 DSH 当作 CI/CD 的工具」**；而本仓 CI/CD 要解决的是**「把这个 dsh 仓
+构建好、部署好」**。这是两个方向，不冲突但优先级不同——**先把基础流水线跑通，再谈增强**。
+
+### 5.2 关键澄清：`dsh-headless` 不是社区插件，它就在我们的 harness 里
+
+调研把它列为「官方 CI 接入基础」，容易被误读成「要引入的东西」。**实测**：它是
+我们 pin 的 harness 自带的 bundle：
+
+```
+harness/packages/bundle/ 下共 6 个内置 bundle：
+  @deepseek-ai/dsh-base          ← 我们两个 profile 都在用
+  @deepseek-ai/dsh-web-app       ← profile dsh 在用
+  @deepseek-ai/dsh-headless      ← 未使用
+  @deepseek-ai/dsh-acp-app       ← 未使用
+  @deepseek-ai/dsh-sdk-app       ← 未使用
+  @deepseek-ai/dsh-sdk-minimal   ← 未使用
+```
+
+`dsh-headless` 的自述（`packages/bundle/headless/package.json`）：
+> The dsh one-shot bundle: a direct core Agent/Session runner over dsh-base with
+> **no Host, HTTP, or browser layer**
+
+用法（其 `cordis.patch.yml` 头部注释）：`dsh --profile headless "<task>"` —— **一次性任务，
+无服务器、无浏览器**，打印durable 结果，语义化退出码。
+
+**这意味着「用起来」是一个 profile 问题，而不是引入依赖的问题**——本仓已经有现成范式
+（`scripts/link-tui.sh` + `make dev-tui` 就是给 `tui` profile 建的）。
+
+### 5.3 逐个判断
+
+| 工具 | 方向 | 本仓是否该用 | 依据 |
+| --- | --- | --- | --- |
+| **`dsh-headless`**（harness 内置） | 把 DSH 嵌进流水线 | **条件具备时可用**（不引入任何 submodule） | 一次性任务模式正合 CI；但**要先有明确的用途**（见 §5.4），为用而用只会增加维护面 |
+| `dsh-headless-json`（社区） | 结构化输出 | **跟随 `dsh-headless`** | JUnit XML / NDJSON 便于 Jenkins 展示；没有 headless 用途就没有它的位置 |
+| `dsh-jenkins`（社区） | 用 DSH 驱动 Jenkins | **暂不建议** | 它让 Agent 能触发 Jenkins 构建，属**运维便利性**而非流水线必需；且需存 Jenkins API token（**凭据面**），而我们的 web profile 已有 10 个 bundle |
+| `deepseek-harness-action`（社区） | GitHub Actions 集成 | **作设计参考，不作依赖** | 它是 Actions 方案；我们保留 Actions，可参考其**凭据隔离**设计（见 §6.2） |
+| `dsh-webhook`（社区） | 事件驱动触发 | **暂不建议** | 用于 Jenkins → DSH 的反馈回路（构建失败触发 AI 分析），属锦上添花 |
+
+### 5.4 真要引入 `dsh-headless` 的话，路径是什么
+
+**先决条件：想清楚用它做什么。** 符合本仓实际的可能用途只有两类：
+
+1. **AI 评审步骤** —— 在 Jenkins verify 里加一步，把 diff 交给 dsh 做一轮分析，
+   输出作为构建产物留存（不阻断流水线）。
+2. **构建失败归因** —— 构建挂了以后，把日志交给 dsh 做一次归因，结果附在构建记录上。
+
+**若确定要做**，落地形态与 `tui` profile 完全一致：
+
+```
+scripts/link-headless.sh      # 参照 link-tui.sh
+make headless TASK="…"        # 参照 make dev-tui（注意：同样不能套 tee）
+```
+
+**不需要**新增 submodule、不需要动 `plugins/`、不需要改现有 profile。
+
+> ⚠️ **但请注意代价**：每多一个 profile 就多一处要维护的组成；
+> 且 headless 要调 LLM，**会产生 API 费用与外部依赖**——
+> 对「构建验证」这种本该确定性、快速、免费的环节，引入 LLM 要慎重。
+> **建议：等基础流水线跑通、确实出现「人工评审跟不上」的痛点时再评估。**
+
+---
+
+## 6. 横切关注点
+
+### 6.1 内置 bundle 的选用现状（实测）
+
+harness 自带 6 个 bundle，本仓**只用了 2 个**：
+
+| bundle | 本仓用途 |
+| --- | --- |
+| `@deepseek-ai/dsh-base` | profile `dsh` 与 `tui` 的宿主层 |
+| `@deepseek-ai/dsh-web-app` | profile `dsh` |
+| `@deepseek-ai/dsh-headless` / `acp-app` / `sdk-app` / `sdk-minimal` | **未使用**（见 §5） |
+
+新增 profile 时（如 `headless`）**不需要**把它加进 `plugins/`——`dsh plugin` 会从
+harness 的解析回退链拿到它。
+
+### 6.2 凭据与密钥
+
+引入 CI 后凭据面会扩散，逐项列出**谁需要什么**：
+
+| 凭据 | 谁用 | 现状 | 目标态 |
+| --- | --- | --- | --- |
+| GitHub 只读（拉 submodule） | `make setup` | 公开仓，无需凭据 | 若转私有/内网镜像则需（见 §4.1 方案 B/C） |
+| pnpm registry | 依赖安装 | 公开 registry | 内网需私服或代理 |
+| Git push（打 tag） | `release.sh` | 本地 git 凭据 | Jenkins credential（**建议专用 deploy key，非个人凭据**） |
+| 服务器 ssh + sudo | `deploy-remote.sh` | 本地 ssh key（`BatchMode=yes` 强制密钥认证） | Jenkins credential（**ssh agent，勿落盘**） |
+| DEEPSEEK_API_KEY | 仅当引入 headless 时 | 不存在 | Jenkins credential |
+
+> **设计参考**：调研 §4.4 的 `deepseek-harness-action` 给出了「凭证隔离的 DSH Worker +
+> 受信任的 Controller 发布变更」的分层设计，可作为 Jenkins 侧凭据隔离的参照。
+
+### 6.3 通知与可观测性
+
+现状：GitHub Actions 的失败在 GitHub 界面看；`make deploy` / `make release` 的日志落
+`log/*.log`（gitignore）。
+
+目标态需要明确：**构建失败的日志在哪看、通知发给谁**。这条**未决**（见 §9），
+但无论选什么，都应保证**失败日志可长期访问**——目前 `log/` 是本地且被忽略的。
+
+### 6.4 回滚与应急
+
+| 场景 | 现状机制 | 说明 |
+| --- | --- | --- |
+| 部署出错 | `deploy-remote.sh` 自动回滚到 `$DEPLOY_DIR-snapshot`（实测） | 已具备 |
+| 发布出错（tag 打错） | **无机制** | tag 已 push 后需人工删 tag + 重打；`release.yaml` 已建的 GitHub Release 也要人工处理 |
+| 主仓 pin 更新引入回归 | **无机制** | 依赖 `make setup` + 冒烟在 CI 侧拦住 |
+
+> 发布/回滚路径是**当前的空白**，建议在 P3 阶段补一个「发布检查清单」，而不是等出事。
+
+### 6.5 与现有文档的关系
+
+| 文档 | 关系 |
+| --- | --- |
+| [../deploy.md](../deploy.md) | 部署的**操作手册**；本文讲的是它如何被 CI 编排，**不重复其步骤** |
+| [../plugin-dev.md](../plugin-dev.md) | 插件开发与常见问题；失败模式见 [cicd_engineering.md](cicd_engineering.md) §6，**以那边为准** |
+| [../backlog.md](../backlog.md) | 未收口事项的单一追踪处；本文的未决项（§9）在落地时应同步进去 |
+| [../../AGENTS.md](../../AGENTS.md) | 硬约束来源；本文 §1.6 是它的 CI 视角解读 |
+
+---
+
+## 7. 与现有资产的复用关系
 
 **不要另起一套**——现有脚本已经是收敛后的单一入口，CI 的职责是调用与编排：
 
@@ -291,7 +431,7 @@ Jenkins 提供**可执行的 deploy job**（带审计与统一环境），但**�
 
 ---
 
-## 6. 迁移路径（设计，分四阶段）
+## 8. 迁移路径（设计，分四阶段）
 
 | 阶段 | 做什么 | 验收标准 | 风险 |
 | --- | --- | --- | --- |
@@ -306,7 +446,7 @@ Jenkins 提供**可执行的 deploy job**（带审计与统一环境），但**�
 
 ---
 
-## 7. 未决与风险
+## 9. 未决与风险
 
 | # | 事项 | 状态 |
 | --- | --- | --- |
@@ -317,4 +457,7 @@ Jenkins 提供**可执行的 deploy job**（带审计与统一环境），但**�
 | U5 | 双跑（Actions + Jenkins）持续多久后切换 | **未决** |
 | R1 | **Gerrit + submodule 组合是本方案最不确定的部分**：Gerrit 对 submodule 的支持不像 GitHub 那样有成熟流程，`refs/for/` 工作流下 submodule 的 pin 变更评审需要实测验证 | **风险，需 P1 阶段专门验证** |
 | R2 | Jenkins 双节点意味着**构建时间翻倍**（`make setup` 是真实构建，含 harness 原生编译） | 需实测耗时后决定是否只在 PR 上跑双平台 |
+| U6 | **构建失败的通知与日志留存**（§6.3）：`log/` 是本地且被 gitignore，CI 侧需定「日志在哪、通知发谁」 | **未决** |
+| U7 | **发布回滚机制**（§6.4）：tag 已 push 后发现打错，当前无流程 | **未决**，建议 P3 补检查清单 |
+| U8 | Jenkins 与 Gerrit 之间用 **Gerrit Trigger 插件**还是**自行实现 REST/SSH 回写** | **未决**，取决于 Gerrit 版本兼容性（见 [cicd_engineering.md](cicd_engineering.md) §2.5） |
 | R3 | 迁移期两套 CI 并行，**pin 不一致可能被两套规则分别判定**（如 Actions 的 tag loop 与 Jenkins 的实现漂移） | 建议让 Jenkins 直接调用同一份校验脚本，而非复制逻辑 |
