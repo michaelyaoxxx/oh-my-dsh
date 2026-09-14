@@ -64,18 +64,33 @@ content: md.slice(0, maxChars) + `\n\n... [truncated; full content saved to ${fu
 `maxChars=100` 时：截出的 100 字 + 提示语（含 macOS 的长 tmpdir 路径，约 102 字）= **202 > 原文 200**。
 「截断」反而让内容变长。
 
-**更关键的是它平台敏感**（实测对照）：
+**更关键的是它依赖 `TMPDIR` 的长度**。
 
-| TMPDIR | 结果 |
-| --- | --- |
-| `/tmp`（短，Linux 默认） | ✅ **29 passed** |
-| macOS 默认 `/var/folders/<长哈希>/T` | ❌ **1 failed** |
+**实测（两次都在 macOS 上，只改 TMPDIR）**：
 
-> 🔴 **同一个 commit，Linux 绿、macOS 红。** 这条同时说明三件事：
+| 运行环境 | TMPDIR | 结果 |
+| --- | --- | --- |
+| macOS | `/tmp` | ✅ **29 passed** |
+| macOS | 系统默认 `/var/folders/<长哈希>/T` | ❌ **1 failed** |
+
+**对 Linux 的结论是推断，不是实测**（⚠️ 本仓写这段时**没有可用的 Linux 环境**——
+本机无 docker/podman/lima，也未配置 `deploy/hosts`；**尚未在真实 Linux 上跑过**）：
+
+- **推断**：Linux 的 `os.tmpdir()` 默认返回 `/tmp`，产物路径为 `/tmp/mineru-<id>.md`，
+  提示语因此短约 60 字节 → `content.length` 落到 160 左右 < 200 → 通过。
+- **该推断的强度**：`TMPDIR=/tmp` 那一跑产生的**路径与 Linux 完全相同**
+  （代码只是把 `taskId` 拼进 `tmpdir()` 下的文件名），所以**只看路径长度这一个变量**，
+  结论是可靠的。
+- **推断覆盖不到的部分**：Linux 与 macOS 的其他差异（Node 版本、依赖解析、vitest 行为）
+  **未验证**。要坐实「Linux 绿」，需在真实 Linux 上跑一次。
+
+> 🔴 这条同时说明三件事：
 > ① 该实现缺少「提示语比省下的还长」时的兜底（上游缺陷，值得报）；
 > ② 该测试的 fixture 不现实（`maxChars` 小于提示语长度）；
-> ③ **只在 Linux 跑 CI 会掩盖这类问题**——这是「必须双平台测试」最直接的实证
-> （呼应 [cicd_architecture.md](cicd_architecture.md) §4.2 与硬约束 C1/C2）。
+> ③ **只在一种 `TMPDIR` 长度的环境下跑 CI 会掩盖这类问题**。
+> 注：GitHub Actions 的 `ubuntu-latest` 把 `TMPDIR` 设为
+> `/home/runner/work/_temp`（同样短），所以 Actions 上大概率也是绿的——
+> 但**这同样是推断**。
 
 ---
 
