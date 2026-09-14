@@ -28,7 +28,7 @@
 | B4 | **新装插件的 UI 验收未做** | modsearch（搜索 + fetch）、dsh-at-file、dsh-agent-teams、dsh-market、modlens 等挂上了但未逐个走查 | 在 `make dev` 里逐个过主要交互 |
 | B5 | **dsh-TUI 未做 UI 验收** | submodule + pin `v0.10.1` + 独立 profile `tui` 都已就绪，但 `make dev-tui` 需真 TTY，**从未实际启动过 TUI 界面** | `make dev-tui` 跑一次。详见[集成手册](superpowers/plans/2026-09-13-dsh-tui-integration.md) |
 | B6 | **dsh-TUI 的 macOS 路径长度缺陷应报上游** | 其 `scripts/verify-inject-channel.mjs` 用 `os.tmpdir()`，macOS 下 unix socket 路径达 105 字节 > `sun_path` 上限 104 → `listen EINVAL`。本仓已用 `TMPDIR=/tmp` 绕行 | 报给 ccch1mneyyy/dsh-TUI（建议短路径或建 socket 前检查长度） |
-| B7 | **本仓 CI 不跑任何 submodule 测试** | 实测：harness 962 个测试文件、10 个插件合计 700+，而 CI 里一个都没跑（只有 pin / shellcheck / 构建 / 冒烟） | 见 [docs/cicd/testing.md](cicd/testing.md) §6 的落地顺序；建议从阶段 A（`scripts/test-plugins.sh` + `make test`）开始，**不依赖 Gerrit/Jenkins** |
+| B7 | **本仓 CI 不跑任何 submodule 测试** | 实测：harness 962 个测试文件、10 个插件合计 700+，而 CI 里一个都没跑（只有 pin / shellcheck / 构建 / 冒烟） | 按 [CI/CD 测试策略](cicd/04-test-strategy.md) 与[迁移阶段](cicd/01-architecture.md#12-迁移与验收阶段)落地版本化测试 catalog、根仓测试入口和发布回归 |
 | B8 | **dsh-plugin-mineru 截断函数在长 TMPDIR 下「越截越长」** | 实测：`lib/index.js:219` 的 `maybeTruncateMd` 把绝对路径嵌进提示语，macOS 长 tmpdir 下 202 > 原文 200 → 其自测 1 failed；`TMPDIR=/tmp` 则 29 passed | 报上游（建议加兜底：提示语长于截断量时不做截断）；同时是「必须双平台测试」的实证 |
 
 ---
