@@ -65,8 +65,39 @@
 - **是否允许 Patchset 自定义受信流水线**（不允许：流水线骨架与 Shared Library 必须来自
   受保护的基础设施仓库或固定受信 ref，见 [docs/cicd/02-gerrit-and-jenkins.md](docs/cicd/02-gerrit-and-jenkins.md)）。
 
+## 操作授权边界
+
+以下动作**必须由用户显式授权**后才执行，不得因为「顺手」或「显然该做」而自行发起：
+
+- `make deploy`（默认对远端执行 `rsync --delete`，误配不可逆）；
+- `make release`、`git push`、打 tag；
+- 任何远程写入、生产操作、或对非本机环境的改动；
+- 在目标机上安装软件、改 systemd、写系统路径。
+
+**动手前先看脏没脏**：根仓 `git status --porcelain`，以及
+`git submodule foreach --recursive 'git status --porcelain'`。发现与本任务无关的
+改动要**原样保留**，不要顺手提交、还原或清理——那是别人的工作区。
+
+## 验证报告格式
+
+报告改动结果时**必须区分已验证与未验证**，并附证据：
+
+```text
+已验证：<实际跑过的命令> → <结果/退出码>
+未验证：<事项>（原因：<缺什么条件>）
+```
+
+**禁止**把「推断」「按设计应该成立」「上次跑过」写成「已验证」。本仓有过声称
+「Linux 绿」而从未在 Linux 上跑过的先例；也有过拿 `createRequire` 反推运行期
+解析、差点删掉一个可用修复的先例。**推断就写推断。**
+
 ## Git 约定
 
 - 主仓默认分支 `main`。
 - commit message **不加任何 AI 署名**（包括 `Co-Authored-By: Claude Code`）。
 - 提交按逻辑单元切分（pin / scripts / ci / docs 分开）。
+- ⚠️ **不要用双引号包裹含反引号的提交信息**。`git commit -m "…\`cmd\`…"` 里的反引号
+  是 **shell 命令替换**，会被**真的执行**：输出混进终端（看起来像"莫名其妙的报错"），
+  而提交信息里留下**空洞**。本仓实际踩过两次——`` `ln -sfn` ``（报 usage）与
+  `` `bash scripts/check-components.mjs` ``（报一堆 //: is a directory），都被误判成
+  工具链问题查了很久。**用 `git commit -F <文件>` 或 `<<'EOF'` heredoc。**
