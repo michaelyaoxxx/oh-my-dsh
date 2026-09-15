@@ -877,7 +877,61 @@ REQUIRE_MAT=""
 for a in "$@"; do [ "$a" = "--require-materialized" ] && REQUIRE_MAT=1; done
 ```
 
-- [ ] **Step 8: 提交**
+- [ ] **Step 8: 实现「构建可能弄脏 submodule」的警告（不阻断）**
+
+**为什么在这里补**：ADR-0005 承诺了这条警告，但**此前没有任何任务实现它**（2026-09-15 T2 评审发现）。
+它只能在 materialized 阶段做——只有那里读得到子仓的 `package.json` 与 git 追踪状态。
+
+判据**必须复用 `declaredEntries`**（与 `tracked-prebuilt` 同一个集合）。
+⚠️ **只查 `main` 是错的**：ADR 自己举的那个例子 `dsh-market`，其 `main`（`lib/index.js`）
+恰恰**未**被跟踪，被跟踪的是 `exports["./client"] → ./client/client.js`——
+按 `main` 判定会把**唯一的例子**漏掉。按全入口集判定，当前应触发的是
+`dsh-market`、`modlens`、`modsearch` 三个。
+
+在 `checkMaterialized` 的循环里、`tracked-prebuilt` 分支**之后**加：
+
+```javascript
+    // ADR-0005：这一条**不写成不变量，只报警告**——本仓可以出于供应链政策选择源码重建，
+    // 即使子仓恰好也提交了产物。故**不调用 fail()**，不影响退出码。
+    if (c.prepareMode === 'source-build') {
+      const dirtyable = declaredEntries(pkg).filter((e) => tracked(e))
+      if (dirtyable.length) {
+        warn(`组件 ${c.name} 是 source-build，但入口 ${dirtyable.join(', ')} 已被 git 跟踪——构建可能弄脏 submodule，进而触发部署的快照保真检查`)
+      }
+    }
+```
+
+`warn()` 若尚不存在，加在 `fail()` 旁边。**必须写 stderr，不能写 stdout**：
+
+```javascript
+// ⚠️ 警告走 **stderr**。stdout 是机器接口——`--list` / `--plan` 的输出被
+// setup.sh / remote-install.sh **逐行解析**成路径与 prepareMode。警告混进 stdout
+// 会被当成一个组件路径。人也一样：stdout 是结果，stderr 是评论。
+function warn(msg) { console.error(`  ⚠️  ${msg}`) }
+```
+
+- [ ] **Step 9: 加警告的夹具用例 E7**
+
+警告不阻断，所以**不能**用只看退出码的 `run_case`——要断言 stderr 上出现了该组件。
+
+```bash
+# E7: source-build 且入口已被跟踪 → 通过（GAP），但**必须**在 stderr 上出现警告
+make_subrepo plugins/e7 '{"name":"e7","main":"lib/index.js","scripts":{"build":"true"}}' "lib/index.js"
+write_catalog "[$(good_component e7 plugins/e7)]" 2
+write_gitmodules "plugins/e7"
+out="$(cd "$TMP" && node scripts/check-components.mjs 2>&1 >/dev/null)"; rc=$?
+printf '  %-44s %s\n' "E7 source-build 且入口已跟踪（警告不阻断）" \
+  "$([ $rc -eq 0 ] && printf '%s' "$out" | grep -q 'e7' && echo 'GAP     ok（且已警告）' || { echo '!! 未通过或未警告'; FAILED=$((FAILED+1)); })"
+```
+
+断言的是**组件名**（数据），不是错误文案——文案重构不应让用例假红。
+
+- [ ] **Step 10: 跑，确认 E1–E7 全过**
+
+Run: `bash scripts/probe-catalog.sh`
+Expected: 无 `!!`。E7 显示 `GAP ok（且已警告）`。
+
+- [ ] **Step 11: 提交**
 
 ```bash
 git add scripts/check-components.mjs scripts/probe-catalog.sh scripts/check-all.sh .github/workflows/verify.yaml .github/workflows/release.yaml
@@ -895,6 +949,12 @@ CI 与 release 用严格模式——否则 fresh clone 上可以一项都不查�
 那正是 09-15 review 诊断出的 fail-open 形态。
 
 带通配符的 exports 目标无法静态判定，明确不在本检查范围内。
+
+另加一条**只警告、不阻断**的（ADR-0005 承诺过、此前无人实现）：
+  source-build ⇒ 若任何会被加载的入口已被 git 跟踪，构建可能弄脏 submodule。
+  判据与 tracked-prebuilt 同一个集合——**只查 main 会漏掉 ADR 自己举的
+  dsh-market 那个例子**（它的 main 未跟踪，被跟踪的是 exports["./client"]）。
+  警告走 stderr：stdout 是机器接口（--list/--plan 被脚本逐行解析），不能混入。
 EOF
 ```
 
@@ -943,38 +1003,60 @@ else
   printf '  %-44s %s\n' "F1 非法目录下 --list 必须失败" "ok"
 fi
 
-# 断言：两个消费者在目录非法时必须非零退出
+# 断言：两个消费者不再使用吞错写法。
+# ⚠️ **这是静态检查，不是行为证明**——它挡不住 `2>/dev/null || :` 这类改写。
+#    原本想做成行为断言（拿非法目录跑一次消费者、断言非零退出），**但那是假绿**：
+#    link-plugins.sh 在 `$ROOT/harness/node_modules` 缺失时本来就会失败，
+#    夹具里必然缺这个目录 → 无论 fail-open 修没修，它都"非零退出"。
+#    真正的行为保证在 Step 4 的 `make link-plugins`（真环境、真目录）。
 for f in scripts/link-plugins.sh deploy/remote-install.sh; do
   if grep -q '2>/dev/null || true' "$ROOT/$f"; then
-    printf '  %-44s %s\n' "F2 $f 仍含吞错的 \`|| true\`" "!! fail-open 未修"; FAILED=$((FAILED + 1))
+    printf '  %-44s %s\n' "F2 $f 仍含吞错写法（静态检查）" "!! fail-open 未修"; FAILED=$((FAILED + 1))
   else
-    printf '  %-44s %s\n' "F2 $f 已不再吞错" "ok"
+    printf '  %-44s %s\n' "F2 $f 已无吞错写法（静态检查）" "ok"
   fi
 done
+```
 
-- [ ] **Step 2: 跑，确认 F1 两条都失败**
+- [ ] **Step 2: 跑，确认 F1/F2 失败**
 
 Run: `bash scripts/probe-catalog.sh`
-Expected: 两行 `!! fail-open 未修`。
+Expected: `F1 ... !! 竟然成功（fail-open）`；两行 `F2 ... !! fail-open 未修`。
 
-- [ ] **Step 3: 去掉吞错**
+- [ ] **Step 3: 去掉吞错——⚠️ 不是简单删掉 `|| true`**
 
-`scripts/link-plugins.sh`，把：
+**先看这个陷阱**（已实测，别再踩）：把 `|| true` 删掉**不解决问题**——
+`done < <(cmd)` 里 **`cmd` 的退出码不进入 `done` 的状态**（进程替换的状态被丢弃）。
+删掉后脚本**照样**带着空 `SKIP_MOUNT` 继续跑，只是错误从"静默"变成"stderr 有字"。
+而 `set -e` 对 `$()` **生效**、对 `<()` **不生效**（两条都已实测）。
+
+`scripts/link-plugins.sh`，把这一整段：
 
 ```bash
+SKIP_MOUNT=()
+while IFS= read -r _p; do
+  [ -n "$_p" ] && SKIP_MOUNT+=("$_p")
 done < <(node "$ROOT/scripts/check-components.mjs" --list runtime:excluded 2>/dev/null || true)
 ```
 
-改为：
+改为（**显式捕获 + 判 rc**）：
 
 ```bash
 # 不吞错：目录查询失败必须让脚本失败。此前用 `2>/dev/null || true`，解析失败会
-# 退化为**空排除列表**——而空列表的含义是"没有任何组件被排除"，正好相反。
+# 退化为**空排除列表**——而"空列表"的含义是"没有任何组件被排除"，与失败正好相反。
 # 高风险消费者不能在配置错误后继续执行（ADR-0005）。
-done < <(node "$ROOT/scripts/check-components.mjs" --list runtime:excluded)
+# ⚠️ 必须用 $() 显式捕获并判 rc：`done < <(cmd)` 拿不到 cmd 的退出码。
+if ! _excluded="$(node "$ROOT/scripts/check-components.mjs" --list runtime:excluded)"; then
+  echo "错误: 组件目录查询失败（原因见上）。link-plugins 拒绝在未知的排除集上继续。" >&2
+  exit 1
+fi
+SKIP_MOUNT=()
+while IFS= read -r _p; do
+  [ -n "$_p" ] && SKIP_MOUNT+=("$_p")
+done <<< "$_excluded"
 ```
 
-`deploy/remote-install.sh` 同样处理它那一处。
+`deploy/remote-install.sh` 同样处理它那一处（同源代码，改法一致）。
 
 - [ ] **Step 4: 跑，确认 F1 通过**
 
@@ -1244,11 +1326,13 @@ EOF
 
 ---
 
-### Task 10: gen-notices 复用 validated loader + declared 字段免责
+### Task 10: 所有 catalog 读取方复用 validated loader + declared 字段免责
 
 **Files:**
 - Modify: `scripts/gen-notices.mjs`
-- Modify: `scripts/probe-catalog.sh`（加用例断言生成物含免责标注）
+- Modify: `scripts/check-licenses.mjs`（改为复用 validated loader）
+- Modify: `scripts/check-pins.sh`（读目录前先验证，fail-closed）
+- Modify: `scripts/probe-catalog.sh`（加用例断言生成物含免责标注 + 所有读取方 fail-closed）
 
 **Interfaces:**
 - Consumes: `check-components.mjs` 的具名导出 `FIELD_CLASS`。
@@ -1264,6 +1348,22 @@ if grep -q '声明，未验证' "$ROOT/THIRD-PARTY-NOTICES.md" 2>/dev/null; then
 else
   printf '  %-44s %s\n' "G1 生成物标注了 declared 字段未经校验" "!! 未标注"; FAILED=$((FAILED + 1))
 fi
+
+echo
+echo "== H. 所有 catalog 读取方都必须 fail-closed =="
+# 夹具目前只拷了 check-components.mjs（见脚本顶部的 cp），H2 要用到第二个：
+cp "$ROOT/scripts/check-licenses.mjs" "$TMP/scripts/"
+# 造一个**版本非法**的 catalog，逐个读取方跑：谁静默接受，谁就是 fail-open。
+# 背景（2026-09-15 T2 评审实测）：check-components.mjs 会拒绝，但
+# check-licenses.mjs 与 gen-notices.mjs **rc=0 静默接受**，check-pins.sh 同理。
+printf '{\n  "version": 1,\n  "components": []\n}\n' > "$TMP/config/components.json"
+for f in check-components.mjs check-licenses.mjs; do
+  if (cd "$TMP" && node "scripts/$f" >/dev/null 2>&1); then
+    printf '  %-44s %s\n' "H $f 拒绝 version=1" "!! 静默接受"; FAILED=$((FAILED + 1))
+  else
+    printf '  %-44s %s\n' "H $f 拒绝 version=1" "ok"
+  fi
+done
 ```
 
 - [ ] **Step 2: 跑，确认 G1 失败**
@@ -1273,10 +1373,39 @@ Expected: `G1 ... !! 未标注`。
 
 - [ ] **Step 3: 让 gen-notices 复用 validated loader**
 
+> ⚠️ **本步的范围是「所有 catalog 读取方」，不止 gen-notices。**
+> 2026-09-15 T2 评审实测：`check-components.mjs` 对 `version: 1` 会拒绝（rc=1），
+> 但 `check-licenses.mjs`、`gen-notices.mjs`、`check-pins.sh` **都 rc=0 静默接受**——
+> 它们直连 `JSON.parse` / `require`，**不看 `version`**。
+> `gen-notices` 原在本任务范围内；**另两个在计划里无人负责**，现一并收口。
+> 这不只是"少一道检查"：schema 再升一版时，字段可能搬家，而这些读取方会**照旧结构读**，
+> 产出**看似正常**的结果——静默的错，不是响的错。
+
 `scripts/gen-notices.mjs` 顶部，把直接解析 JSON 改为：
 
 ```javascript
 import { FIELD_CLASS, loadCatalogValidated } from './check-components.mjs'
+```
+
+**`scripts/check-licenses.mjs`**（同一种改法）——把顶层那行
+`const catalog = JSON.parse(readFileSync(CATALOG, 'utf8'))` 换成：
+
+```javascript
+import { loadCatalogValidated } from './check-components.mjs'
+// …
+const catalog = loadCatalogValidated()
+```
+
+**`scripts/check-pins.sh`**（bash，不能 import）——在 `ROOT="$PWD"` 之后、**任何读目录之前**
+加一道验证并直接退出。顺序刻意放在最前：版本非法时**根本不联网**。
+
+```bash
+# 先过校验器再读目录：本脚本只读 path/pinPolicy/pinRef，直连 require() 会让
+# **未知 schema 版本**的目录静默通过。fail-closed。
+if ! node scripts/check-components.mjs >/dev/null; then
+  echo "错误: 组件目录未通过校验，check-pins 拒绝在其上工作（原因见上）。" >&2
+  exit 1
+fi
 ```
 
 并在 `check-components.mjs` 里加具名导出：
@@ -1338,16 +1467,20 @@ Expected: G1 = ok；无 `!!`。
 - [ ] **Step 6: 提交**
 
 ```bash
-git add scripts/check-components.mjs scripts/gen-notices.mjs THIRD-PARTY-NOTICES.md scripts/probe-catalog.sh
+git add scripts/check-components.mjs scripts/gen-notices.mjs scripts/check-licenses.mjs scripts/check-pins.sh THIRD-PARTY-NOTICES.md scripts/probe-catalog.sh
 git commit -F - <<'EOF'
-fix(notices): 复用 validated loader + 给 declared 字段标注免责
+fix(notices): 所有 catalog 读取方复用 validated loader + declared 字段免责
 
-两个问题：
+三个问题：
 
-① **生成物不校验目录**：gen-notices 直接 JSON.parse，目录非法时照样产出。
-   而生成物（THIRD-PARTY-NOTICES.md）是**对外**的那一份。改为复用
-   check-components.mjs 的 loadCatalogValidated()。
+① **读取方不校验目录**：check-licenses.mjs / gen-notices.mjs 直接 JSON.parse、
+   check-pins.sh 直接 require，**都不看 version**——目录非法时照样干活。
+   实测：version=1 时 check-components.mjs 拒绝，而这三个 rc=0 静默接受。
+   改为复用 check-components.mjs 的 loadCatalogValidated()；bash 那份在读目录前
+   先跑一次校验器并直接退出（版本非法时根本不联网）。
    为此把 check-components.mjs 改成"直接运行才执行分发"，使其可被 import。
+   ⚠️ 危害不在"少一道检查"：schema 再升版时字段会搬家，盲读旧结构的读取方
+   会产出**看似正常**的结果——是静默的错。
 
 ② **免责只活在字段字典里**：生成物用「来源」「进制品」这类**事实性表头**，
    读者无从知道那只是声明。而分类若只在 config/README.md 里可见，

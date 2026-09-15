@@ -113,9 +113,12 @@
 - `runtimeScope: excluded` ⇒ `prepareMode = none`
 - `prepareMode: source-build` ⇒ `package.json.scripts.build` 存在
 
-**一条只报警告、不阻断的：** `source-build` 且 `main` 已被 git 跟踪 ⇒ 构建会**弄脏 submodule**，
-进而触发部署的快照保真检查。这是**运维后果**，不是 schema 矛盾——本仓可以出于供应链政策
-选择源码重建，即使子仓恰好也提交了产物。
+**一条只报警告、不阻断的：** `source-build` 且**任何会被加载的入口**已被 git 跟踪 ⇒
+构建会**弄脏 submodule**，进而触发部署的快照保真检查。这是**运维后果**，不是 schema 矛盾——
+本仓可以出于供应链政策选择源码重建，即使子仓恰好也提交了产物。
+
+⚠️ 判据与上面 `tracked-prebuilt` **同一个集合**（`main` / `types` / 无通配符 `exports` 目标）。
+**只查 `main` 会漏报**：`dsh-market` 的 `main` 未被跟踪，被跟踪的是 `exports["./client"]`。
 
 ## 版本与迁移
 
