@@ -196,6 +196,22 @@ function declaredEntries(pkg) {
   return [...out].map((p) => p.replace(/^\.\//, '')).filter(Boolean)
 }
 
+// 「会被构建覆盖的入口」≠ declaredEntries 的**全**集——两条规则问的不是同一件事：
+//   · tracked-prebuilt 那条**不变量**问的是"fresh clone 上组件还能用吗" ⇒ **所有**声明入口
+//     都算候选：package.json 缺了组件直接坏，它必须留在候选里。
+//   · **本常量服务的警告**问的是"构建会**覆盖**哪个已跟踪文件" ⇒ 候选只有**构建产物**。
+// package.json / cordis.patch.yml 是**人手维护的 manifest / 配置**，构建从不写它们：
+// 把元数据算进来，就是对着**根本不会被弄脏**的组件喊狼来了——而一条喊狼来了的警告会被当成
+// 噪音忽略，那它就等于没有（本仓实测：不排除元数据时，11 个组件里 6 个喊，其中 3 个是假的）。
+// 故这里只保留**代码模块**（构建真正会 emit 的东西：.js / .mjs / .cjs / .jsx / .ts / .tsx /
+// .d.ts——`.d.ts` 以 `ts` 结尾，故被同一条覆盖）。
+// ⚠️ 别为了"少一个常量"把这段过滤并进 declaredEntries：那会让 tracked-prebuilt 那条**阻断**
+//    规则不再检查 package.json，等于**悄悄放宽一条会拒人的规则**。两条规则的候选集**必须**
+//    分开（E 组有用例分别钉住两边：不变量那边是 E1/E2，警告这边是 E7/E8）。
+// 边界（有意）：非代码的构建产物（如 .css / .map）不在候选内——本仓当前没有这种声明入口，
+// 真出现时按本节注释的理由扩展本常量，而不是退回"全入口集"。
+const BUILDABLE_ENTRY = /\.(?:[cm]?js|jsx|[cm]?ts|tsx)$/
+
 // materialized 阶段：需要读子仓。子仓未初始化时**跳过并计数**——
 // 本检查不得引入「先跑 make setup」的前置依赖。
 // 但 --require-materialized 下，skip 本身即失败：CI 与 release 用它，
@@ -237,11 +253,13 @@ function checkMaterialized(components) {
     // ADR-0005：这一条**不写成不变量，只报警告**——本仓可以出于供应链政策选择源码重建，
     // 即使子仓恰好也提交了产物。故**不调用 fail()**，不影响退出码。
     //
-    // ⚠️ 判据必须用**全入口集**（declaredEntries），**不能只查 main**：ADR 自己举的那个
-    //    例子 dsh-market 的 main（lib/index.js）恰恰**未**被跟踪，被跟踪的是
-    //    exports["./client"] → ./client/client.js——只查 main 会把**唯一的例子**整个漏掉。
+    // ⚠️ 判据必须用**全入口集**（declaredEntries）里的**构建产物**（BUILDABLE_ENTRY），
+    //    **不能只查 main**：ADR 自己举的那个例子 dsh-market 的 main（lib/index.js）恰恰**未**被
+    //    跟踪，被跟踪的是 exports["./client"] → ./client/client.js——只查 main 会把**唯一的
+    //    例子**整个漏掉。也**不能**把声明的元数据（package.json / cordis.patch.yml）算进来：
+    //    它们不是构建产物，算进来就是对不会被弄脏的组件喊狼来了（理由见 BUILDABLE_ENTRY）。
     if (c.prepareMode === 'source-build') {
-      const dirtyable = declaredEntries(pkg).filter((e) => tracked(e))
+      const dirtyable = declaredEntries(pkg).filter((e) => BUILDABLE_ENTRY.test(e) && tracked(e))
       if (dirtyable.length) {
         warn(`组件 ${c.name} 是 source-build，但入口 ${dirtyable.join(', ')} 已被 git 跟踪——构建可能弄脏 submodule，进而触发部署的快照保真检查`)
       }

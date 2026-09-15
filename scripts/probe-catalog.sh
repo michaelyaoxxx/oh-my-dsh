@@ -154,27 +154,77 @@ assert_case() {
   fi
 }
 
+# 断言一条**警告**用例。run_case 在这里用不上：这条警告**不阻断**，没有退出码可判。
+#
+# 判据取**数据**（stderr 上是否出现该组件名），**不取文案**——文案重构不该让用例假红。
+# 两条流**分开**收集：只断言"输出里有它"是抓不住"警告混进了 stdout"的，而 stdout 是
+# **机器接口**（`--list` / `--plan` 被 setup.sh / remote-install.sh 逐行解析成路径与
+# prepareMode），混进去的警告会被当成一个组件路径——那正是这条警告必须走 stderr 的理由。
+#
+# ⚠️ 正例（PRESENT）与反例（ABSENT）**必须成对**：只测正例挡不住"以后又对元数据喊狼来了"，
+#    只测反例挡不住"警告彻底不响了"。而这条规则**不阻断**，两种退化都**不会**让任何
+#    退出码变红——没有这组装置，下次重构把候选集改回"全入口集"（实测会从 3 个喊到 6 个）
+#    是**静默**发生的。这是本脚本里唯一一类"没有退出码兜底"的规则，故装置只能建在这里。
+#
+# 用 `--require-materialized` 跑（fixture 里只有一个组件、子仓已 init ⇒ 不影响 rc），
+# 为的是顺带拿一条**数据**保证：该组件**真的被读了**。否则 package.json 一旦被写成非法
+# JSON（如 make_subrepo 的占位符盖掉了它），组件会走 skipped 分支——**ABSENT 用例就会因为
+# "根本没查"而假过**，而那与"元数据不算构建产物"是两回事。严格模式下 skip 即 rc≠0，
+# 正好把这条假过路径变成红。
+# $1=场景名  $2=期望(PRESENT/ABSENT)  $3=组件名
+assert_warn_case() {
+  local name="$1" expect="$2" comp="$3" cerr="" bad="" verdict=0 rc=0 out err
+  # 构造失败即失败（同 run_case）：不留痕的话，坏 fixture 会让用例**因错误的原因**变绿。
+  if [ -s "$CONSTRUCT_ERR" ]; then cerr="$(cat "$CONSTRUCT_ERR")"; : > "$CONSTRUCT_ERR"; fi
+  out="$(cd "$TMP" && node scripts/check-components.mjs --require-materialized 2>"$TMP/.warn-stderr")"; rc=$?
+  err="$(cat "$TMP/.warn-stderr")"
+  [ "$rc" -eq 0 ] || bad="rc=${rc}（警告不阻断、且组件已被 materialize，应通过）"
+  if [ "$expect" = "PRESENT" ]; then
+    printf '%s' "$err" | grep -q "$comp" || bad="${bad}；stderr 上没有出现 ${comp}（该响却没响）"
+  else
+    printf '%s' "$err" | grep -q "$comp" && bad="${bad}；stderr 上出现了 ${comp}（对不该脏的组件喊了狼来了）"
+  fi
+  printf '%s' "$out" | grep -q "$comp" && bad="${bad}；警告污染了 stdout"
+  [ -n "$cerr" ] && bad="${bad}；构造失败：${cerr}"
+  [ -z "$bad" ] || verdict=1
+  assert_case "$name" "$verdict" "${bad:-}"
+}
+
 # 造一个最小子仓：$1=path（相对 TMP）  $2=package.json 的 JSON  $3=被 git 跟踪的入口文件名（空格分隔，可空）
 #
 # 为什么必须造**真的** git 仓，而不是像 A–D 组那样只写一个 package.json：
 # materialized 阶段的判据是「这个文件在子仓里**被 git 跟踪**吗」（`git ls-files`），
 # 用合成的目录测不出来——那正是本组用例存在的理由。
 #
-# $3 为空时 `for entry in $3` 展开为**零次**迭代，且随后 `git commit` 会因
-# "nothing to commit" 返回 1（工作区里只有一个未跟踪的 package.json）。
-# 这是**有意**的：该用例要的正是"入口**未**被跟踪"的仓。本脚本无 `set -e`，
-# 故不影响后续断言；代价是 git 会向 stderr 打一段 "nothing added to commit" 的提示。
+# $3 为空（E1/E4：要测"入口**未**被跟踪"）时**不 commit**：那种场景本就不需要 commit——
+# 仓库停在"已 init、HEAD 未出生"的状态，`git ls-files --error-unmatch` 照样报未跟踪，
+# 判据完全相同。这也顺手消掉了原先 `git commit` 因"nothing to commit"吐出的 8 行 stderr
+# 噪音（它会混进 `make check` 与 CI 日志）。
+# ⚠️ 降噪**没有**用 `git commit … 2>/dev/null`：那会把**真的**提交失败（user.email 没配上、
+#    index.lock 残留、磁盘满）一起吞掉，用例会在一个"看着没事"的坏仓上**假过**。
+#    这里改为：让 git 的失败照常可见（非零退出 + stderr），并经 T1 的构造失败通道上报。
+#
+# 构造失败**必须留痕**（同 good_component 的理由）：上面任一 git 命令失败，造出来的是一个
+# **假仓**，而 `tracked()` 把任何 git 报错都当成"未跟踪"——于是"入口未跟踪"那几条用例会
+# **因错误的原因变绿**。走 record_construct_error 后，下一个消费该通道的用例会判为
+# "构造失败——本用例结果不可信"。
 make_subrepo() {
-  local d="$TMP/$1" entry
+  local d="$TMP/$1" entry rc=0
   mkdir -p "$d"
   printf '%s' "$2" > "$d/package.json"
-  ( cd "$d" && git init -q . && git config user.email t@t && git config user.name t )
+  ( cd "$d" && git init -q . && git config user.email t@t && git config user.name t ) || rc=1
   for entry in $3; do
     mkdir -p "$d/$(dirname "$entry")"
-    printf '// fixture\n' > "$d/$entry"
-    ( cd "$d" && git add -f "$entry" )
+    # 已存在的文件（如 package.json）**不覆盖**：它的内容是本 fixture 声明的载荷，
+    # 被占位符盖掉会让 package.json 不再是合法 JSON → 该组件走 skipped 分支 →
+    # 用例"通过"的理由就变成了"根本没查"，而不是"元数据不算构建产物"。
+    [ -f "$d/$entry" ] || printf '// fixture\n' > "$d/$entry"
+    ( cd "$d" && git add -f "$entry" ) || rc=1
   done
-  ( cd "$d" && git -c commit.gpgsign=false commit -qm fixture )
+  if [ -n "$3" ]; then
+    ( cd "$d" && git -c commit.gpgsign=false commit -qm fixture ) || rc=1
+  fi
+  [ "$rc" -eq 0 ] || record_construct_error "make_subrepo($1) 构造失败：git 命令非零退出（用例结果不可信）"
 }
 
 echo "组件目录校验 覆盖夹具"
@@ -473,25 +523,29 @@ run_case "E5 未初始化子仓 + --require-materialized" CAUGHT --require-mater
 # E6 同一 fixture 不加 --require-materialized → 允许跳过
 run_case "E6 未初始化子仓（非严格模式，应通过）"   GAP
 
-# E7: source-build 且入口已被跟踪 → **不阻断**（期望 GAP），但**必须**在 stderr 上出现该组件。
-# 分量（为什么这条警告值得钉）：它是 ADR-0005 承诺过、却一直没人实现的那条——
-# 构建会覆盖**已被 git 跟踪**的产物，从而弄脏 submodule，进而触发部署的快照保真检查。
-# 判据取**数据**（stderr 上出现该组件名），**不取文案**：文案重构不该让用例假红。
-# 两条流**分开**收集：只断言"输出里有 e7"是抓不住"警告混进了 stdout"的，而 stdout 是
-# **机器接口**（`--list` / `--plan` 被 setup.sh / remote-install.sh 逐行解析成路径与
-# prepareMode），混进去的警告会被当成一个组件路径——那正是这条警告必须走 stderr 的理由。
-# 故本用例走 assert_case 而不是 run_case：run_case 的判据是退出码，而这条**不阻断**。
-make_subrepo plugins/e7 '{"name":"e7","main":"lib/index.js","scripts":{"build":"true"}}' "lib/index.js"
+# E7/E8 是**一对**，钉的是同一条**只警告、不阻断**的规则（ADR-0005：构建会覆盖已被 git 跟踪
+# 的产物，从而弄脏 submodule，进而触发部署的快照保真检查）。这条规则**没有退出码**，
+# 所以两种退化都不会让任何用例变红，必须专门建装置：
+#   · E7（正例）：声明的 `.js` 入口已被跟踪 ⇒ 警告**必须响**（挡住"警告彻底不响了"）；
+#   · E8（反例）：只跟踪 `package.json` / `cordis.patch.yml` 这类**元数据** ⇒ **不得**响
+#     （挡住"又对元数据喊狼来了"）。
+# E8 的 fixture 刻意照着真目录里被误触的那三个的长相造（dsh-better-sidebar 只有 package.json
+# 被跟踪；dsh-agent-teams 是 package.json + cordis.patch.yml；loongsuite-observability 的
+# 真产物 dist/* 未跟踪）——把元数据算进候选集时，实测警告面会从 3 个涨到 6 个，
+# 其中恰好就是这三个，而它们的构建**从不覆盖**那两个文件。
+#
+# 分量（为什么候选集只取构建产物）：警告问的是"构建会**覆盖**哪个已跟踪文件"。
+# 人手维护的 manifest / 配置不是构建产物 ⇒ 算进来就是对**根本不会被弄脏**的组件报警，
+# 而一条喊狼来了的警告会被当噪音忽略，那它就等于没有。判据细节见 BUILDABLE_ENTRY。
+make_subrepo plugins/e7 '{"name":"e7","main":"lib/index.js","exports":{"./package.json":"./package.json"},"scripts":{"build":"true"}}' "lib/index.js package.json"
 write_catalog "[$(good_component e7 plugins/e7)]" 2
 write_gitmodules "plugins/e7"
-e7_out="$(cd "$TMP" && node scripts/check-components.mjs 2>"$TMP/.e7-err")"; e7_rc=$?
-e7_err="$(cat "$TMP/.e7-err")"
-e7_bad=""
-[ "$e7_rc" -eq 0 ] || e7_bad="rc=${e7_rc}（警告不阻断，应通过）"
-printf '%s' "$e7_err" | grep -q 'e7' || e7_bad="${e7_bad}；stderr 上无 e7 警告"
-printf '%s' "$e7_out" | grep -q 'e7' && e7_bad="${e7_bad}；警告污染了 stdout"
-e7_verdict=0; [ -z "$e7_bad" ] || e7_verdict=1
-assert_case "E7 source-build 且入口已跟踪（警告不阻断）" "$e7_verdict" "${e7_bad:-}"
+assert_warn_case "E7 source-build 且 .js 入口已跟踪（须警告）" PRESENT e7
+# E8：声明的产物 lib/index.js **未**被跟踪（同 loongsuite 的 dist/*），被跟踪的只有元数据
+make_subrepo plugins/e8meta '{"name":"e8meta","main":"lib/index.js","exports":{".":"./lib/index.js","./cordis.patch.yml":"./cordis.patch.yml","./package.json":"./package.json"},"scripts":{"build":"true"}}' "package.json cordis.patch.yml"
+write_catalog "[$(good_component e8meta plugins/e8meta)]" 2
+write_gitmodules "plugins/e8meta"
+assert_warn_case "E8 只跟踪元数据（package.json/cordis.patch.yml）⇒ 不得警告" ABSENT e8meta
 
 echo
 if [ "$STRICT" = 1 ] && [ "$FAILED" -ne 0 ]; then
