@@ -529,10 +529,10 @@ write_gitmodules "plugins/c1"
 run_case "C6 required 但 prepareMode = none"      CAUGHT
 ```
 
-- [ ] **Step 2: 跑，确认 C1–C6 中除 C4 外全部失败**
+- [ ] **Step 2: 跑，确认 C1–C7 中除 C4 外全部失败**
 
 Run: `bash scripts/probe-catalog.sh`
-Expected: C1/C2/C3/C5/C6 = `!! 与预期不符`；C4 = ok。
+Expected: C1/C2/C3/C5/C6/C7 = `!! 与预期不符`；C4 = ok。
 
 - [ ] **Step 3: 抽出 `validateCatalog` 并加不变量**
 
@@ -555,11 +555,26 @@ Expected: C1/C2/C3/C5/C6 = `!! 与预期不符`；C4 = ok。
     if (c.runtimeScope === 'required' && c.prepareMode === 'none') {
       fail(`${where} 的 runtimeScope=required，但 prepareMode=none —— 属于运行时却不准备`)
     }
+    // ── 类型不变量：这三个字段必须是**数组** ────────────────────────────────
+    // 写成标量（如 `ciScope: "metadata"`）能骗过"字段存在"检查，却会让
+    // `--list ci:data` 这类选择子按**子串**误命中（`"metadata".includes("data")` 为真），
+    // 返回本不该返回的组件。数组形态下匹配是精确的——**根因是标量，不是选择子**。
+    // （T3 评审实测：标量 + `--list ci:data` → rc=0 返回了组件；已核实数组形态 `ci:meta` 返回空。）
+    for (const f of ['ciScope', 'releaseScope', 'platforms']) {
+      if (!Array.isArray(c[f])) {
+        fail(`${where} 的 ${f} 必须是数组（收到 ${JSON.stringify(c[f])}）`)
+      } else if (c[f].some((x) => typeof x !== 'string')) {
+        fail(`${where} 的 ${f} 元素必须都是字符串`)
+      }
+    }
 ```
+
+并在夹具 C 组加一条：`write_catalog "[$(good_component c1 plugins/c1 '{"ciScope":"metadata"}')]" 2`
+→ `run_case "C7 ciScope 写成标量（须拒）" CAUGHT`。
 
 删除原来那一行 `if (c.pinPolicy === 'tag' && c.pinRef.startsWith('refs/')) ...`（已被上面取代）。
 
-- [ ] **Step 4: 跑，确认 C1–C6 全过**
+- [ ] **Step 4: 跑，确认 C1–C7 全过**
 
 Run: `bash scripts/probe-catalog.sh && node scripts/check-components.mjs`
 Expected: 全部通过。
@@ -1395,6 +1410,12 @@ import { loadCatalogValidated } from './check-components.mjs'
 // …
 const catalog = loadCatalogValidated()
 ```
+
+> ⚠️ **顺带一处同形缺陷（T3 评审发现，在此一并收口）**：`gen-notices.mjs` 里
+> `FULL_NAME[lic] ?? 兜底` —— `FULL_NAME` 是对象字面量，**`FULL_NAME['constructor']` 会命中
+> `Object` 的构造器**（真值），`??` 不触发兜底，于是把**一个函数**渲染进**合规文档**。
+> 改法：`Object.hasOwn(FULL_NAME, lic) ? FULL_NAME[lic] : 兜底`。
+> 它与本任务「读取方要 fail-closed」是同一件事：读之前先确认键**真的是自己的**。
 
 **`scripts/check-pins.sh`**（bash，不能 import）——在 `ROOT="$PWD"` 之后、**任何读目录之前**
 加一道验证并直接退出。顺序刻意放在最前：版本非法时**根本不联网**。
