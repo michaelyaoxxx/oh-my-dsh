@@ -93,23 +93,13 @@ for d in harness plugins/*/; do
   echo "==> ${d%/} 使用 pnpm@$(actual_pnpm "$d")"
 done
 
-# ---------- 4. harness：安装依赖 + 构建 ----------
-# dsh CLI 的源码运行入口是 harness 根脚本 pnpm dsh（node --import tsx/esm apps/cli/src/bin.ts），
-# 构建产物（apps/cli/lib 等）使其无需编译即可运行。
-# harness 根 postinstall（scripts/install-lefthook.mjs）要在 git 公共 config 上启用
-# extensions.worktreeConfig 并安装 lefthook hooks；但 harness 作为 submodule 时
-# core.worktree 位于公共 config（.git/modules/harness/config），该脚本会拒绝迁移并让
-# install 失败。submodule 的 hooks 本就不参与主仓提交，故按其自带开关 CI=true 跳过
-# hooks 安装（该脚本是 harness 中唯一读取 CI 的 lifecycle 脚本，不影响其他 postinstall）。
-# 注意: build（pnpm run build:lib/web）内部嵌套的 pnpm 调用会做 deps 校验并自动补跑
-# pnpm install，必须让整个 harness 步骤都继承 CI=true（export），否则嵌套 install
-# 会再次触发 lefthook postinstall 失败。
-echo "==> 构建 harness"
-( cd harness && export CI=true && pnpm install --frozen-lockfile && pnpm build )
-
-# ---------- 5. 各插件：安装依赖 + 构建 ----------
-#    dsh-web 是 pnpm workspace，自带 pnpm-lock.yaml → --frozen-lockfile 可行；
-#    根 package.json 有 build（pnpm -r build）。
+# ---------- 4. harness 与各插件：安装依赖 + 构建（经共用 executor） ----------
+# harness **不再有独立步骤**：它是 `--plan prepare` 的第 1 行（runtimeScope=required、
+# prepareMode=source-build），与插件同走一条路：scripts/prepare-executor.sh 准备**一次**。
+# 它需要的 CI=true 不是"多一个步骤"，而是一条**环境策略**——住在下面的钩子里（完整缘由见彼处）。
+#
+# dsh-web 是 pnpm workspace，自带 pnpm-lock.yaml → --frozen-lockfile 可行；
+# 根 package.json 有 build（pnpm -r build）。
 # 无 packageManager 的插件仓（如 modlens、dsh-market）corepack 在仓内向上找不到 pin 会回落
 # latest（本机缓存的 12.3.4 已损坏）；统一经 harness 目录解析 harness pin 的 pnpm，--dir 让
 # 命令仍在插件仓内执行（仓内 pnpm-workspace.yaml / lockfile 生效）。install 与 build 同此路径
@@ -177,21 +167,28 @@ plugin_install() { # $1=目录 $2=安装子命令（pnpm 用 install，npm 用 c
   git -C "$d" ls-files --error-unmatch pnpm-workspace.yaml >/dev/null 2>&1 && scaffold_tracked=1
   errfile="$(mktemp)"
   # ERR_PNPM_IGNORED_BUILDS 打在 stdout 上（stderr 为空），必须合并两流才抓得到。
-  if plugin_run "$d" "$cmd" "$@" >"$errfile" 2>&1; then
+  # ⚠️ 退出码必须从**那次命令**上取。写成 `if cmd; then … fi` 再 `ret=$?` 是错的：
+  # if 语句在条件为假且无 else 时退出码是 **0**，于是安装失败被当成成功返回 0
+  # （fail-open，实测过）——executor 的 `pe_install … || return 1` 会因此形同虚设。
+  ret=0
+  plugin_run "$d" "$cmd" "$@" >"$errfile" 2>&1 || ret=$?
+  if [ "$ret" -eq 0 ]; then
     rm -f "$errfile"
     return 0
   fi
-  ret=$?
   if ! grep -q "ERR_PNPM_IGNORED_BUILDS" "$errfile"; then
     rm -f "$errfile"
     return "$ret"
   fi
   rm -f "$errfile"
   echo "==> ${d%/} 声明了构建策略但仍被 pnpm 拦截，以 --ignore-scripts 重试"
-  plugin_run "$d" "$cmd" "$@" --ignore-scripts
+  # 重试的退出码同样要**显式**返回：函数末尾那条 `if` 语句会把状态盖成 0。
+  ret=0
+  plugin_run "$d" "$cmd" "$@" --ignore-scripts || ret=$?
   if [ "$scaffold_was" -eq 0 ] && [ "$scaffold_tracked" -eq 0 ] && [ -e "$d/pnpm-workspace.yaml" ]; then
     rm -f "$d/pnpm-workspace.yaml"
   fi
+  return "$ret"
 }
 
 # 插件构建统一用短 TMPDIR。macOS 的 os.tmpdir() 是 /var/folders/<长哈希>/T（本次实测
@@ -227,8 +224,29 @@ PREPARE_PLAN="$(node scripts/check-components.mjs --plan prepare)"
 
 # ── 环境策略钩子（本地）─────────────────────────────────────────────────────
 # 本地容忍缺 lockfile（非冻结安装），服务器不允许——这是**唯一**该有差异的地方。
+#
+# ⚠️ **为什么 harness 要 CI=true（别把这两个 export 当多余的删掉）**
+# dsh CLI 的源码运行入口是 harness 根脚本 pnpm dsh（node --import tsx/esm apps/cli/src/bin.ts），
+# 构建产物（apps/cli/lib 等）使其无需编译即可运行。
+# harness 根 postinstall（scripts/install-lefthook.mjs）要在 git 公共 config 上启用
+# extensions.worktreeConfig 并安装 lefthook hooks；但 harness 作为 submodule 时
+# core.worktree 位于公共 config（.git/modules/harness/config），该脚本会拒绝迁移并让
+# install 失败。submodule 的 hooks 本就不参与主仓提交，故按其自带开关 CI=true 跳过
+# hooks 安装（该脚本是 harness 中唯一读取 CI 的 lifecycle 脚本，不影响其他 postinstall）。
+# 注意: build（pnpm run build:lib/web）内部嵌套的 pnpm 调用会做 deps 校验并自动补跑
+# pnpm install，必须让**整个** harness 准备过程都继承 CI=true，否则嵌套 install
+# 会再次触发 lefthook postinstall 失败（install 与 build 两个钩子都要设，缺一不可）。
+#
+# ⇒ 这是**环境策略**，所以它住在钩子里、而不是"给 harness 单开一个准备步骤"（那样又会有
+#    两处各自决定怎么准备）。**只对 harness 设**：CI 会改变一大批 npm/pnpm 生命周期脚本的
+#    语义，外泄到别的组件是未经验证的行为变更——故用 `local` + `export` 把作用域钉在本函数内
+#    （实测：函数内子进程可见 CI=true，函数返回后恢复原状/未设）。
 pe_install() { # $1=rel  $2=frozen|nonfrozen
   local rel="$1" d="$1/"
+  if [ "$rel" = "harness" ]; then
+    local CI=true
+    export CI
+  fi
   if [ -f "${d}pnpm-lock.yaml" ]; then
     plugin_install "$d" install --frozen-lockfile
   elif has_npm_lock "$d"; then
@@ -239,7 +257,13 @@ pe_install() { # $1=rel  $2=frozen|nonfrozen
     plugin_install "$d" install
   fi
 }
-pe_run_build() { plugin_run "$1/" run build; }
+pe_run_build() { # $1=rel（CI=true 同上：build 内部的 deps 校验会补跑 pnpm install）
+  if [ "$1" = "harness" ]; then
+    local CI=true
+    export CI
+  fi
+  plugin_run "$1/" run build
+}
 
 # shellcheck source=scripts/prepare-executor.sh
 . "$ROOT/scripts/prepare-executor.sh"
