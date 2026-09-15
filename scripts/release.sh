@@ -14,7 +14,14 @@ fi
 #     此前这里只跑 check-pins —— **许可证内容检查被整条绕过**：一个目录与
 #     package.json 都伪装成 MIT、LICENSE 内容却是 GPL 的 tag，可以走 release 路径。
 #     见 docs/reviews/2026-09-15-incremental-design-review.md P1-1。
-bash "$ROOT/scripts/check-all.sh" --offline
+#
+#     ⚠️ `--require-materialized` 不能省：ADR-0005 §3 与 config/README.md 都写
+#     「**CI 与 release 必须用**」，verify.yaml / release.yaml 也都带了它。少了这个旗标，
+#     两条路径**不是同一道门**：子仓未初始化 / 无 git 元数据的检出上，materialized 阶段
+#     会被**静默跳过**并照常通过——正是 ADR 决策 3 要在 release 路径上堵掉的 fail-open。
+#     （实务上第 2 步的 check-pins.sh 与第 4 步的 snapshot_row 在子仓缺失时也会 exit 1，
+#     但那是**另一道门**在兜底，与「release 用严格校验」是两回事。）
+bash "$ROOT/scripts/check-all.sh" --offline --require-materialized
 
 # 2. 子模块 pin 与远端一致（分支 pin / tag pin 两种语义）
 #    清单与校验逻辑收敛在 scripts/check-pins.sh —— 与 GitHub Actions 的
