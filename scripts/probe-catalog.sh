@@ -154,6 +154,29 @@ assert_case() {
   fi
 }
 
+# 造一个最小子仓：$1=path（相对 TMP）  $2=package.json 的 JSON  $3=被 git 跟踪的入口文件名（空格分隔，可空）
+#
+# 为什么必须造**真的** git 仓，而不是像 A–D 组那样只写一个 package.json：
+# materialized 阶段的判据是「这个文件在子仓里**被 git 跟踪**吗」（`git ls-files`），
+# 用合成的目录测不出来——那正是本组用例存在的理由。
+#
+# $3 为空时 `for entry in $3` 展开为**零次**迭代，且随后 `git commit` 会因
+# "nothing to commit" 返回 1（工作区里只有一个未跟踪的 package.json）。
+# 这是**有意**的：该用例要的正是"入口**未**被跟踪"的仓。本脚本无 `set -e`，
+# 故不影响后续断言；代价是 git 会向 stderr 打一段 "nothing added to commit" 的提示。
+make_subrepo() {
+  local d="$TMP/$1" entry
+  mkdir -p "$d"
+  printf '%s' "$2" > "$d/package.json"
+  ( cd "$d" && git init -q . && git config user.email t@t && git config user.name t )
+  for entry in $3; do
+    mkdir -p "$d/$(dirname "$entry")"
+    printf '// fixture\n' > "$d/$entry"
+    ( cd "$d" && git add -f "$entry" )
+  done
+  ( cd "$d" && git -c commit.gpgsign=false commit -qm fixture )
+}
+
 echo "组件目录校验 覆盖夹具"
 echo "  scratch: ${TMP}（退出即清理）"
 
@@ -387,16 +410,88 @@ assert_case "D10 --plan 与 --list 选出同一批组件" "$d10_rc" "plan=[$(pri
 # 两条路径的 ✗ 条数都是契约，故各一条用例（判据取**条数**，不取文案）。
 # fixture：一个 ENUM 取值非法（catalog 阶段）+ 一个 license 与其 package.json 不一致
 # （materialized 阶段，只有默认路径才会跑到）。
+# ⚠️ 那个 package.json **必须**带 scripts.build：本用例的判据是"✗ 的条数 = 跑过的阶段数"
+#    （catalog 阶段 1 条 + materialized 阶段 1 条 = 2）。它的 prepareMode 取默认的
+#    source-build，若没有 build 脚本，T6 新增的「source-build ⇒ 须有 scripts.build」
+#    会在 materialized 阶段**再**命中一条，条数变 3——那不是"守卫少报了"，
+#    却会让本用例红得与名字无关。实测过：T6 实现后本用例正是这样变红的（✗×3）。
 write_catalog "[$(good_component ok plugins/ok '{"runtimeScope":"bogus"}')]" 2
 write_gitmodules "plugins/ok"
 mkdir -p "$TMP/plugins/ok"
-printf '{"name":"ok","license":"Apache-2.0"}\n' > "$TMP/plugins/ok/package.json"
+printf '{"name":"ok","license":"Apache-2.0","scripts":{"build":"true"}}\n' > "$TMP/plugins/ok/package.json"
 d11_n="$(cd "$TMP" && node scripts/check-components.mjs 2>&1 | grep -c '✗')"
 d11_rc=0; [ "$d11_n" -eq 2 ] || d11_rc=1
 assert_case "D11 默认路径 ✗=2（不因守卫而少报）" "$d11_rc" "✗×${d11_n}（期望 2）"
 d12_n="$(cd "$TMP" && node scripts/check-components.mjs --list prepare 2>&1 | grep -c '✗')"
 d12_rc=0; [ "$d12_n" -eq 1 ] || d12_rc=1
 assert_case "D12 查询路径 ✗=1（唯一归因不变）" "$d12_rc" "✗×${d12_n}（期望 1）"
+
+echo
+echo "== E. materialized 阶段不变量 =="
+# E 组与 A–D 组的**根本差别**：它读的是子仓（package.json + git 追踪状态），
+# 故 fixture 必须是**真的 git 仓**（make_subrepo）。A–D 组只写文件即可，这里写文件不够。
+#
+# E1–E6 走 run_case，理由与 A–D 组相同：它们是**阻断**型不变量，**退出码就是判据**，
+# 且受 run_case 的唯一归因约束（CAUGHT ⇒ 恰好 1 条 ✗）——"被旁边那条规则顺带判红"
+# 的用例挡不住规则被删，本计划已为此返工过一次（见 run_case 那段注释）。
+# ⚠️ 简报给的 printf + `$(cond && A || { …; FAILED=$((FAILED+1)); })` 形态**没有采用**：
+#    那个自增在**命令替换的子 shell**里，出不来——用例会打印 `!!` 而 `--strict`
+#    （`make check` 用的正是它）**仍然 rc=0**，即"报了红但不判红"。这正是本文件
+#    assert_case 那段注释记的形态；E5/E6 因此改用 run_case，E7 用 assert_case。
+# 预期 CAUGHT 的用例都会打印理由（✗ 原文，见 run_case 末尾），据它确认"红的是对应那条规则"。
+# E1: tracked-prebuilt 但入口未被跟踪 → 必须失败
+make_subrepo plugins/e1 '{"name":"e1","main":"lib/index.js"}' ""
+write_catalog "[$(good_component e1 plugins/e1 '{"prepareMode":"tracked-prebuilt"}')]" 2
+write_gitmodules "plugins/e1"
+run_case "E1 tracked-prebuilt 但入口未跟踪"        CAUGHT
+# E2: tracked-prebuilt 且入口已跟踪 → 通过
+# 它是 E1/E3 的**基线**：没有它，E1 的 CAUGHT 可能只是"凡 tracked-prebuilt 必拒"（判据写反了）。
+make_subrepo plugins/e2 '{"name":"e2","main":"lib/index.js"}' "lib/index.js"
+write_catalog "[$(good_component e2 plugins/e2 '{"prepareMode":"tracked-prebuilt"}')]" 2
+write_gitmodules "plugins/e2"
+run_case "E2 tracked-prebuilt 且入口已跟踪"        GAP
+# E3: tracked-prebuilt 且 main 已跟踪，但 exports 指向未跟踪文件 → 必须失败
+# 分量：**只查 main 是不够的**。fresh clone 上会不会坏，取决于"任何会被加载的入口"，
+# 而不是 package.json 里那一行 main。ADR 自己举的例子（dsh-market）正是 main 未跟踪、
+# 被跟踪的是 exports["./client"]——只查 main 会把那个例子整个漏掉。
+make_subrepo plugins/e3 '{"name":"e3","main":"lib/index.js","exports":{".":"./lib/index.js","./extra":"./lib/extra.js"}}' "lib/index.js"
+write_catalog "[$(good_component e3 plugins/e3 '{"prepareMode":"tracked-prebuilt"}')]" 2
+write_gitmodules "plugins/e3"
+run_case "E3 exports 目标未跟踪（只查 main 不够）"  CAUGHT
+# E4: source-build 但无 build 脚本 → 必须失败
+# 分量：一个"要构建"的组件没有任何东西可执行构建，就永远是没构建过的状态，
+# 而它在 catalog 里却是 runtimeScope=required（属于运行时组合）。
+make_subrepo plugins/e4 '{"name":"e4"}' ""
+write_catalog "[$(good_component e4 plugins/e4)]" 2
+write_gitmodules "plugins/e4"
+run_case "E4 source-build 但无 build 脚本"          CAUGHT
+# E5/E6 是**同一 fixture 的两种模式**，一对必须一起看：
+# E5 未初始化子仓 + --require-materialized → 必须失败（skip 不再是免死金牌）
+write_catalog "[$(good_component e5 plugins/e5 '{"prepareMode":"tracked-prebuilt"}')]" 2
+write_gitmodules "plugins/e5"
+run_case "E5 未初始化子仓 + --require-materialized" CAUGHT --require-materialized
+# E6 同一 fixture 不加 --require-materialized → 允许跳过
+run_case "E6 未初始化子仓（非严格模式，应通过）"   GAP
+
+# E7: source-build 且入口已被跟踪 → **不阻断**（期望 GAP），但**必须**在 stderr 上出现该组件。
+# 分量（为什么这条警告值得钉）：它是 ADR-0005 承诺过、却一直没人实现的那条——
+# 构建会覆盖**已被 git 跟踪**的产物，从而弄脏 submodule，进而触发部署的快照保真检查。
+# 判据取**数据**（stderr 上出现该组件名），**不取文案**：文案重构不该让用例假红。
+# 两条流**分开**收集：只断言"输出里有 e7"是抓不住"警告混进了 stdout"的，而 stdout 是
+# **机器接口**（`--list` / `--plan` 被 setup.sh / remote-install.sh 逐行解析成路径与
+# prepareMode），混进去的警告会被当成一个组件路径——那正是这条警告必须走 stderr 的理由。
+# 故本用例走 assert_case 而不是 run_case：run_case 的判据是退出码，而这条**不阻断**。
+make_subrepo plugins/e7 '{"name":"e7","main":"lib/index.js","scripts":{"build":"true"}}' "lib/index.js"
+write_catalog "[$(good_component e7 plugins/e7)]" 2
+write_gitmodules "plugins/e7"
+e7_out="$(cd "$TMP" && node scripts/check-components.mjs 2>"$TMP/.e7-err")"; e7_rc=$?
+e7_err="$(cat "$TMP/.e7-err")"
+e7_bad=""
+[ "$e7_rc" -eq 0 ] || e7_bad="rc=${e7_rc}（警告不阻断，应通过）"
+printf '%s' "$e7_err" | grep -q 'e7' || e7_bad="${e7_bad}；stderr 上无 e7 警告"
+printf '%s' "$e7_out" | grep -q 'e7' && e7_bad="${e7_bad}；警告污染了 stdout"
+e7_verdict=0; [ -z "$e7_bad" ] || e7_verdict=1
+assert_case "E7 source-build 且入口已跟踪（警告不阻断）" "$e7_verdict" "${e7_bad:-}"
 
 echo
 if [ "$STRICT" = 1 ] && [ "$FAILED" -ne 0 ]; then

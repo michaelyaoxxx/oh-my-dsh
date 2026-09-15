@@ -15,6 +15,12 @@
 //   node scripts/check-components.mjs --list runtime:<required|excluded>
 //   node scripts/check-components.mjs --plan prepare    # **动作计划**：每行 <path>\t<prepareMode>
 //
+// `--require-materialized` 可与上面任一形式并用：它把 materialized 阶段的
+// "子仓未初始化 ⇒ 跳过"变成**失败**（CI 与 release 用它，见 validate() 那段的说明）。
+// ⚠️ 它**只对默认（validate）路径有效**：查询路径（--list / --plan）按设计只跑 catalog
+//    阶段、不读子仓（见下方守卫那段），故 `--list prepare --require-materialized`
+//    不会因"子仓没初始化"而失败。要严格校验就**别带** --list / --plan。
+//
 // 退出码：0 通过；1 校验失败（**含 --list / --plan**：两个查询入口都先校验再查询）
 
 import { readFileSync } from 'node:fs'
@@ -92,6 +98,11 @@ const REQUIRED_FIELDS = [
 
 const fail = (msg) => { console.error(`✗ ${msg}`); process.exitCode = 1 }
 
+// ⚠️ 警告走 **stderr**。stdout 是机器接口——`--list` / `--plan` 的输出被
+// setup.sh / remote-install.sh **逐行解析**成路径与 prepareMode。警告混进 stdout
+// 会被当成一个组件路径。人也一样：stdout 是结果，stderr 是评论。
+const warn = (msg) => { console.error(`  ⚠️  ${msg}`) }
+
 const SCHEMA_VERSION = 2
 
 function loadCatalog() {
@@ -160,6 +171,84 @@ function checkLicenseDeclarations(components) {
           `以组件自己的声明为准修正 config/components.json（该字段会进 THIRD-PARTY-NOTICES.md）。`,
       )
     }
+  }
+  return { checked, skipped }
+}
+
+const REQUIRE_MATERIALIZED = process.argv.includes('--require-materialized')
+
+// 从一个 package.json 里取出「本仓承诺会随 pin 一起交付」的入口文件清单。
+// 只取**无通配符**的目标：带 * 的 exports 无法静态判定，不在本检查范围内。
+//
+// ⚠️ `./package.json` 这类子路径导出也在清单里（多数组件的 exports 都带它）。
+//    它是**真的**会被 `require('<pkg>/package.json')` 加载的入口，且确实必须随 pin
+//    交付，故对 tracked-prebuilt 那条不变量而言它是对的判据。
+function declaredEntries(pkg) {
+  const out = new Set()
+  if (typeof pkg.main === 'string') out.add(pkg.main)
+  if (typeof pkg.types === 'string') out.add(pkg.types)
+  const walk = (v) => {
+    if (typeof v === 'string') { if (!v.includes('*')) out.add(v) }
+    else if (v && typeof v === 'object') for (const x of Object.values(v)) walk(x)
+  }
+  walk(pkg.exports)
+  // 归一化：去掉前导 './'，便于与 git ls-files 的输出比较
+  return [...out].map((p) => p.replace(/^\.\//, '')).filter(Boolean)
+}
+
+// materialized 阶段：需要读子仓。子仓未初始化时**跳过并计数**——
+// 本检查不得引入「先跑 make setup」的前置依赖。
+// 但 --require-materialized 下，skip 本身即失败：CI 与 release 用它，
+// 否则 fresh clone 上可以一项都不查就通过（fail-open）。
+function checkMaterialized(components) {
+  let checked = 0
+  const skipped = []
+  for (const c of components) {
+    if (c.prepareMode === 'none' || c.prepareMode === 'install-only') continue
+    const dir = join(ROOT, c.path)
+    let pkg
+    try {
+      pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
+    } catch {
+      skipped.push(c.name)
+      continue
+    }
+    checked++
+    const tracked = (rel) => {
+      try {
+        execFileSync('git', ['-C', dir, 'ls-files', '--error-unmatch', rel], { stdio: 'ignore' })
+        return true
+      } catch { return false }
+    }
+    if (c.prepareMode === 'tracked-prebuilt') {
+      const entries = declaredEntries(pkg)
+      if (!entries.length) {
+        fail(`组件 ${c.name} 的 prepareMode=tracked-prebuilt，但其 package.json 未声明任何入口（main/types/exports）——无物可验`)
+      }
+      for (const e of entries) {
+        if (!tracked(e)) {
+          fail(`组件 ${c.name} 的 prepareMode=tracked-prebuilt，但声明的入口 ${e} **未被 git 跟踪**——fresh clone 上该组件是坏的`)
+        }
+      }
+    }
+    if (c.prepareMode === 'source-build' && !pkg.scripts?.build) {
+      fail(`组件 ${c.name} 的 prepareMode=source-build，但其 package.json 没有 scripts.build`)
+    }
+    // ADR-0005：这一条**不写成不变量，只报警告**——本仓可以出于供应链政策选择源码重建，
+    // 即使子仓恰好也提交了产物。故**不调用 fail()**，不影响退出码。
+    //
+    // ⚠️ 判据必须用**全入口集**（declaredEntries），**不能只查 main**：ADR 自己举的那个
+    //    例子 dsh-market 的 main（lib/index.js）恰恰**未**被跟踪，被跟踪的是
+    //    exports["./client"] → ./client/client.js——只查 main 会把**唯一的例子**整个漏掉。
+    if (c.prepareMode === 'source-build') {
+      const dirtyable = declaredEntries(pkg).filter((e) => tracked(e))
+      if (dirtyable.length) {
+        warn(`组件 ${c.name} 是 source-build，但入口 ${dirtyable.join(', ')} 已被 git 跟踪——构建可能弄脏 submodule，进而触发部署的快照保真检查`)
+      }
+    }
+  }
+  if (skipped.length && REQUIRE_MATERIALIZED) {
+    fail(`--require-materialized：${skipped.length} 个组件的子仓未初始化（${skipped.join(', ')}）——严格模式下不允许跳过。请先 make setup 或确保 checkout 带 submodule。`)
   }
   return { checked, skipped }
 }
@@ -290,10 +379,12 @@ function validate(catalog) {
   validateCatalog(catalog)
 
   const lic = checkLicenseDeclarations(components)
+  const mat = checkMaterialized(components)
 
   if (!process.exitCode) {
     console.log(`✓ 组件目录校验通过：${components.length} 个组件，与 .gitmodules 双向一致`)
     console.log(`  （license 与组件自身声明核对：${lic.checked} 个一致；${lic.skipped} 个跳过——子仓未初始化或无 package.json）`)
+    console.log(`  （materialized 检查：${mat.checked} 个已验；${mat.skipped.length} 个跳过——子仓未初始化${REQUIRE_MATERIALIZED ? '（严格模式，跳过即失败）' : ''}）`)
     const excluded = components.filter((c) => c.runtimeScope === 'excluded')
     if (excluded.length) console.log(`  （runtimeScope=excluded：${excluded.map((c) => c.name).join(', ')}）`)
   }

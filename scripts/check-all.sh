@@ -11,6 +11,15 @@
 #   bash scripts/check-all.sh --offline   # 只跑**离线组**：不联网、不依赖构建、最快。
 #                                         # CI 的 step 0 用它——它必须最先失败。
 #   bash scripts/check-all.sh --list      # 只列将执行哪些检查（不跑）
+#   --require-materialized                # **可与上面任一形式并用**（`--offline --require-materialized`）：
+#                                         # 把 materialized 阶段的"子仓未初始化 ⇒ 跳过"变成失败。
+#                                         # CI 与 release 用它——否则 fresh clone 上可以一项都不查
+#                                         # 就通过（fail-open）。单独出现时按**全量**模式跑：
+#                                         # "严格"与"联网/离线"是正交的两个维度。
+#                                         # ⚠️ 顺序是 `<模式> --require-materialized`：模式旗标只认
+#                                         # 第一个参数（本脚本既有约定，如 `--offline --list` 也只认
+#                                         # 前者）。故 `--require-materialized --list` 会按全量跑，
+#                                         # 要列清单请写成 `--list --require-materialized`。
 #
 # 退出码：0 全过；1 任一项失败
 
@@ -23,9 +32,16 @@ MODE="full"
 case "${1:-}" in
   --offline) MODE="offline" ;;
   --list)    MODE="list" ;;
+  --require-materialized) MODE="full" ;;
   "")        MODE="full" ;;
-  *) echo "错误: 未知参数 ${1}（支持 --offline / --list）" >&2; exit 1 ;;
+  *) echo "错误: 未知参数 ${1}（支持 --offline / --list / --require-materialized）" >&2; exit 1 ;;
 esac
+
+# 旗标**扫全部参数**（不只看 $1）：CI 与 release 传的是 `--offline --require-materialized`，
+# 只认 $1 会让这个旗标静默失效——而它静默失效的后果正是 fail-open，
+# 也就是它本身要堵的那件事。
+REQUIRE_MAT=""
+for a in "$@"; do [ "$a" = "--require-materialized" ] && REQUIRE_MAT=1; done
 
 FAILED=0
 PASSED=0
@@ -41,7 +57,7 @@ run() { # $1=描述  $2...=命令
 # ── 离线组 ───────────────────────────────────────────────────────────────────
 # 不联网、不依赖构建（`make setup` 之前也能跑），故可以也应当**最先失败**。
 # CI 的 step 0 就跑这一组。顺序：先声明层（最便宜）→ 内容层 → 生成物 → 门禁回归。
-check_components() { run "组件目录（声明层：双向集合 + license 词表 + 与 package.json 核对）" node scripts/check-components.mjs; }
+check_components() { run "组件目录（声明层：双向集合 + license 词表 + 与 package.json 核对）" node scripts/check-components.mjs ${REQUIRE_MAT:+--require-materialized}; }
 check_licenses()   { run "组件许可证文件（内容层：读 LICENSE 判 copyleft）"                 node scripts/check-licenses.mjs; }
 check_notices()    { run "第三方声明未过期（合规文档）"                                     node scripts/gen-notices.mjs --check; }
 check_gate_regr()  { run "许可证门禁回归（覆盖边界未被改弱）"                               bash scripts/probe-license-gate.sh --strict; }

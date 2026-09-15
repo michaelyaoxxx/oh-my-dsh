@@ -34,7 +34,7 @@ jobs:
           # package.json 都伪装成 MIT、LICENSE 内容却是 GPL」的 tag 仍可能越过
           # release 路径建出 GitHub Release。见 2026-09-15 incremental review P1-1。
           # 建 Release 就是**对外分发**的时刻，门禁必须与 verify 同源。
-          bash scripts/check-all.sh --offline
+          bash scripts/check-all.sh --offline --require-materialized
           bash scripts/check-pins.sh
       # 干净构建 + link + 冒烟，通过才建 Release
       - name: Build & smoke

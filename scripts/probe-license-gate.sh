@@ -70,10 +70,17 @@ stage() {
   ]
 }
 EOF
+  # ⚠️ scripts.build 是**夹具完整性**的一部分，不是多余的装饰：本夹具的 prepareMode 是
+  #    source-build，而 T6 新增的「source-build ⇒ 须有 scripts.build」在缺它时会命中，
+  #    于是 **L1 整列变成 CAUGHT**——A3/B1/B2/B3/B4 期望 GAP，整片基线变红。
+  #    那不是覆盖边界退化（方向恰好相反：L1 更严了），也不是本条用例要测的维度（许可证），
+  #    而是**夹具欠规定**：一个没有 build 脚本的 source-build 组件本身就是非法的。
+  #    加它只补全夹具，**用例期望值一个都没动**——覆盖边界不变。
+  #    （实测：T6 实现后本脚本 6 项 `!!`；补上此处即全绿。）
   if [ "$2" = "-" ]; then
-    printf '{"name":"evil"}' > "$TMP/plugins/evil/package.json"
+    printf '{"name":"evil","scripts":{"build":"true"}}' > "$TMP/plugins/evil/package.json"
   else
-    printf '{"name":"evil","license":"%s"}' "$2" > "$TMP/plugins/evil/package.json"
+    printf '{"name":"evil","license":"%s","scripts":{"build":"true"}}' "$2" > "$TMP/plugins/evil/package.json"
   fi
 }
 
