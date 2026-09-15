@@ -33,15 +33,15 @@ T 编号对应 commit 边界，便于从台账直接跳回证据。
 | --- | --- | --- | --- | --- | --- |
 | **T0a** | 部署守卫：危险目标硬拒绝、符号链接防护、状态不参与回滚、整批回滚、部署标识 | ✅ 完成 | `1391a20` | — | R3 |
 | **T0b** | 状态迁 `/var/lib/dsh`、非 root、systemd hardening、`releases/<digest>` + current 指针 | 🔶 **阻塞** | — | 可验证的 Linux 主机 | R4 |
-| **T1** | 文档权威归一（唯一架构入口）+ AGENTS 去漂移 | ✅ 完成 | `5a80706` | — | R1 |
-| **T2** | 组件目录单一事实源 + pin 语义拆分（tag 相等 / branch 祖先）+ TUI 转 metadata-only | ✅ 完成 | `8a6d9b9` | — | R2 |
+| **T1** | 文档权威归一（唯一架构入口）+ AGENTS 去漂移 | 🟡 **部分完成** | `5a80706`；残留见 09-15 review P1-5（README/ADR 仍指旧事实源） | — | R1 |
+| **T2** | 组件目录单一事实源 + pin 语义拆分 + TUI 转 metadata-only | 🟡 **部分完成** | `8a6d9b9`；P0-1（选择器语义）已修，但字段跨约束未定义（09-15 review P1-4） | — | R2 |
 | **T3** | Jenkins 信任边界（presubmit 凭据隔离、受信流水线、controller 0 executors） | ⬜ 规格可写 / **验证阻塞** | — | 第 3 个执行域（见 §T3） | R5, R6 |
 | **T4** | 不可变制品 | ⬜ 阻塞 | — | 同 T0b | R4 |
 | **T5** | 制品 / 发布状态机 | ⬜ 可做（纯规格） | — | — | R4, R5 |
 | **T6** | 状态迁移兼容矩阵 | 🔶 **调研完成，待决策**：不能作为纯文档产出 | 见 §T6 | 需在路径 A/B/C 中选 | R4 |
 | **T7** | headless 发布回归 | ⬜ **可实测** | — | 本机可跑 | R5 |
 | **T8** | Gerrit / GitHub 出口模型 | ⬜ 可做（纯设计） | — | — | R1 |
-| **T9** | GHA 供应链加固（SHA pin + checksum）+ 开源治理文件 | ✅ 完成 | `49180d9` | — | R2, R5 |
+| **T9** | GHA 供应链加固（SHA pin + checksum）+ 开源治理文件 | 🟡 **部分完成** | `49180d9`；release 门禁旁路已修，但治理占位符未收口（09-15 review P2-1） | — | R2, R5 |
 
 图例：✅ 完成 ・ ⬜ 未开始 ・ 🔶 阻塞
 
@@ -163,6 +163,39 @@ B 只在某个具体状态被证明有真实迁移需求时才做。
 否则这个模型不自洽。
 
 ---
+
+## 2026-09-15 增量 review 的处置
+
+详见 [reviews/2026-09-15-incremental-design-review.md](reviews/2026-09-15-incremental-design-review.md)。
+**逐条核实后判定：无一条不合理。** 三个 P0 与六条 P1 全部成立（含若干条是本轮**自己引入**的回归）。
+
+| 条目 | 核实 | 处置 |
+| --- | --- | --- |
+| **P0-1** setup 用 `ci:install` 选组件，跳过 6 个 required 插件 | ✅ 成立（本轮在 T2 引入；本地靠 T2 前的 `node_modules` 掩盖，**全新环境必炸**） | ✅ 已修：改为具名选择器 `prepare`（`runtimeScope` 驱动），`setup.sh` 与 `remote-install.sh` **共用同一个** |
+| **P0-2** rsync 同步 ignored 产物（macOS Mach-O 到 Linux） | ✅ 成立（实测同步 31,626 条，含 `darwin-arm64/bin/system.node` 与 `.dsh-build/`） | ✅ 已修：排除清单**由 git 动态派生**（656 条），实测降到 19,945 条且危险项全排除 |
+| **P0-3** t0b 探针 `rm -rf "$1"` 无校验 | ✅ 成立（本轮引入） | ✅ 已修：**取消自定义路径**，改 mktemp + 删前校验；7 个危险输入实测全拒 |
+| **P1-1** release 绕过许可证内容门禁 | ✅ 成立（本轮引入） | ✅ 已修：verify / release.yaml / release.sh 三门同用 `check-all.sh --offline` |
+| **P1-2** 政策 fail-closed 而脚本 fail-open；MPL-2.0 与「不接纳任何 copyleft」矛盾 | ✅ 成立 | ⬜ 未修（见下） |
+| **P1-3** catalog 无 canonical URL，`gerrit-fork` 标签配 GitHub URL | ✅ 成立 | ⬜ 未修（见下） |
+| **P1-4** manifest 消费者 fail-open；`config/README.md` 不存在；`--list runtime` 文档错 | ✅ 成立 | 🟡 部分已修（`--list` 缺值改为报错、具名选择器）；`config/README.md` 与跨字段 schema 未做 |
+| **P1-5** README/ADR 旧事实源、台账「提前完成」 | ✅ 成立 | 🟡 台账本次已纠偏；README/ADR 待改 |
+| **P1-6** 提交信息泄露内网主机 / 被 shell 替换破坏 | ✅ 成立（`ad22dd3` 含真实账号+IP；`1b52942` 正文被插入 11 行 `git submodule status`） | ⬜ 历史已推送，不改写；待补扫描（见下） |
+
+### 本轮新发现（review 未提，核实代码时发现）
+
+- **`dsh-agent-teams` 的 `buildMode: prebuilt-verified` 与事实不符**：该字段意为「入口已提交」，
+  但它的 `lib/` 是 **gitignored**（0 个跟踪文件，与确实提交了 `lib/` 的 `dsh-automation` 不同）。
+  这正是 P1-4 说的「字段语义没有定义处」的实例——目录说的和仓库实际状态不一致，而没有任何校验发现它。
+
+### 未修项的理由（本轮范围外，需先定模型）
+
+**P1-2 / P1-3 / P1-6 与 P1-4 的 schema 部分**都要先回答「字段语义是什么」——
+即 review 说的 I1「组件生命周期模型」。逐条打补丁会制造新的不一致（P0-1 就是这么来的：
+给某个脚本改一个字符串选择器，而不是先定义「哪个字段决定什么」）。故合并为一批设计任务，
+不在这轮顺手改。
+
+**P1-6 的历史泄露不可撤销**：`ad22dd3` 已在远端。私网 IP 不是凭据，且仓库当前为私有；
+处理方式是**补扫描防再犯**（提交正文检测 host/IP/凭据模式）而不是改写已共享历史。
 
 ## 2026-09-14 review 的逐条处置
 
