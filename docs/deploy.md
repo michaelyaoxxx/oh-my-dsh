@@ -2,6 +2,10 @@
 
 `make deploy` 把主仓按 submodule pin 一键部署到服务器（systemd 管理），部署目录由 `DEPLOY_DIR` 环境变量指定（默认 `/opt/dsh`，所有服务器同一值）。部署是显式动作，不上 CI。
 
+> ⚠️ **该路径从未端到端跑通过**（见 [backlog.md](backlog.md) B3），且**非生产形态**（以 root 运行、
+> 应用与状态同目录）。若你是接手部署的人，**先读 [deploy-handoff.md](deploy-handoff.md)**
+> ——那里有现状、已知会挡路的坑与验收标准。本文只讲**怎么操作**。
+
 ## 前置条件
 
 - **本地（发起部署的机器）**：装有 `rsync`、`ssh`；能免密 SSH 登录服务器（密钥认证，先 `ssh-copy-id` 配置好）；已跑过 `make setup`（本地 `harness/` 需已检出，否则部署脚本会拒绝执行）。

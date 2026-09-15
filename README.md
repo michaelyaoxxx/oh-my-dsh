@@ -12,7 +12,7 @@ make dev       # 启动 DSH Web（$DSH_HOME=./.dsh，插件 link 挂载，改插
 `make dev` 先把 `plugins/*` 中可挂载的插件包 link 挂进 profile `dsh`，再启动服务，默认监听 `http://127.0.0.1:3080`（仅本机回环）。`make dev` 依赖 harness 已构建，首次使用请先 `make setup`。
 
 - 插件开发：[docs/plugin-dev.md](docs/plugin-dev.md)
-- 远程部署：[docs/deploy.md](docs/deploy.md)
+- 远程部署：[docs/deploy.md](docs/deploy.md)（操作手册）・ ⚠️ 接手部署先读 [docs/deploy-handoff.md](docs/deploy-handoff.md)（**该路径从未跑通**）
 - 远程访问（在外用手机/另一台电脑）：[docs/remote-access.md](docs/remote-access.md)（含第三方方案尽调 [docs/dsh-remote.md](docs/dsh-remote.md)）
 - 遗留问题：[docs/backlog.md](docs/backlog.md)（**还欠什么**，完成即删）
 - 整改台账：[docs/remediation-plan.md](docs/remediation-plan.md)（**做过什么**，T×R 映射与证据）
