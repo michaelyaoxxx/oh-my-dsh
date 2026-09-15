@@ -47,6 +47,38 @@
 - **改了 pin 必须同步 [config/components.json](config/components.json)**，否则 CI 第一步
   （双向校验）就会失败——这是有意的：漏登记一个组件会让它在 CI 里静默消失。
 
+### CI/CD 载体
+
+CI/CD 的载体是 **Gerrit（评审 + 门禁）+ Jenkins（构建 / 部署）+ Nexus（制品）**，
+设计与实施规范见 [docs/cicd/README.md](docs/cicd/README.md)。
+**`.github/workflows/` 只是开源后的预留通路**，不是当前主链。
+
+**默认不修改 `.github/workflows/`。** 例外只有两类：
+
+1. **供应链安全修复**（Action 钉 commit SHA、下载第三方产物校 checksum）；
+2. **把新的校验挂到门禁上**——校验逻辑本身写在 `scripts/`，workflow 只负责调用。
+
+**任何「在 workflow 里写新逻辑」的改动一律拒绝**：那不是例外，是走错了地方，改写到 `scripts/`。
+
+> 这条界线的理由：只要 workflow 里还有内联逻辑，就必然需要改，「默认不改」会被自己击穿。
+> 当前 `verify.yaml` 仍有**两处内联**（shellcheck 下载 + checksum、冒烟 curl 轮询），
+> 是这条政策的不稳定点——理想是把它们也搬进 `scripts/`。
+>
+> **范围**：只管**本仓**的 `.github/workflows/`。submodule 各自的 GitHub Actions
+> 是它们自己的事，本仓不干预。
+
+### TUI 不是当前重点
+
+`make dev-tui` 与 `plugins/dsh-tui` 只是**备选交互方式**，默认**不做功能性测试、不做功能修改**
+（组件目录里它已是 `ciScope: ["metadata"]` / `releaseScope: []` / `runtimeScope: "excluded"`）。
+
+⚠️ **代价要知道**：它不构建、不测试、不挂载，**坏掉时没有任何信号**——
+别把「它没报错」当成「它还能用」。
+
+⚠️ **范围**：`scripts/link-tui.sh` 在 `scripts/` 下，**仍受 shellcheck 门禁覆盖**。
+「不修改」指不做功能开发与测试，**不是**「CI 报错也不修」。
+报上游缺陷（如 [docs/backlog.md](docs/backlog.md) B6）不受此限。
+
 ## 改动区域 → 必须跑什么
 
 | 改动区域 | 必须做 |
@@ -54,7 +86,7 @@
 | `scripts/*.sh`、`deploy/*` | `shellcheck -S style scripts/*.sh deploy/remote-install.sh` 全绿（CI 固定 0.11.0） |
 | `config/components.json` / `.gitmodules` | `node scripts/check-components.mjs` + `bash scripts/check-pins.sh`；**改了组件集合或 `license` 还要** `node scripts/gen-notices.mjs`（声明文件是**合规文档**，`--check` 会拒绝过期内容） |
 | `patches/*.yml` | `make link-plugins` 后 `dsh --profile dsh --dump-config`，确认没有 patch 抹掉旁键 |
-| `.github/workflows/*` | Action **pin 到 commit SHA** 并注明版本；下载第三方产物必须校验 checksum |
+| `.github/workflows/*`（**默认不改**，仅上方「CI/CD 载体」列的两类例外） | 例外改动时：Action **pin 到 commit SHA** 并注明版本；下载第三方产物必须校验 checksum |
 | `docs/cicd/*` | 它是 CI/CD 规范源；改动须说明影响的阶段/Job/脚本/凭据/回滚路径 |
 
 ## Review 时重点看什么

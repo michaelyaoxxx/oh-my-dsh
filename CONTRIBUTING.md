@@ -50,7 +50,7 @@ shellcheck -S style scripts/*.sh deploy/remote-install.sh
 | `scripts/*.sh`、`deploy/*` | 上面的自检全跑；shellcheck 必须全绿（CI 用 `-S style`，固定 0.11.0） |
 | `config/components.json` | `check-components.mjs`（双向校验）+ `check-pins.sh` |
 | `patches/*.yml` | `make link-plugins` 后 `dsh --profile dsh --dump-config`，确认**没有** patch 抹掉旁键（整表替换语义，见 plugin-dev.md） |
-| `.github/workflows/*` | YAML 能解析；改动 Action 时**pin 到 commit SHA** 并注明版本 |
+| `.github/workflows/*`（**默认不改**） | CI/CD 载体是 Gerrit + Jenkins，`.github/workflows/` 只是开源预留通路。只有两类例外可改：供应链安全修复、把新校验挂到门禁上（**逻辑写在 `scripts/`**）。例外改动时另需：YAML 能解析；Action **pin 到 commit SHA** 并注明版本 |
 | `docs/cicd/*` | 它是 CI/CD 的规范源；改动需说明影响的阶段/Job/脚本/凭据/回滚路径 |
 
 ## 提交约定
