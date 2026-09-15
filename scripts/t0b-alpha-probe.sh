@@ -16,11 +16,47 @@
 #
 # 全程只在 $SCRATCH 内操作；全部通过则清理，失败则保留供排查。
 # 不碰系统路径、不装包、不改 systemd。
-# 用法：bash t0b-alpha-probe.sh [scratch 目录]
+# 用法：bash t0b-alpha-probe.sh [--keep]
+#   --keep  失败时也保留 scratch（默认失败即保留、成功即清理）
 
 set -uo pipefail
 
-SCRATCH="${1:-$HOME/dsh-t0b-alpha}"
+# ── scratch 目录：**由脚本自建，不接受任何外部路径** ─────────────────────────
+# 本脚本会 `rm -rf` 它。早先的写法是 `SCRATCH="${1:-…}"` + `rm -rf "$SCRATCH"`，
+# 于是一次手滑（`bash t0b-alpha-probe.sh ~`、`… /`、`… .`）就是不可恢复的数据删除，
+# 而脚本本身没有任何路径校验。**破坏性目标不该可配**——直接取消这个入口。
+KEEP=0
+for arg in "$@"; do
+  case "$arg" in
+    --keep) KEEP=1 ;;
+    *) echo "错误: 未知参数 ${arg}（仅支持 --keep；scratch 目录由脚本自建，不接受指定）" >&2; exit 1 ;;
+  esac
+done
+SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/dsh-t0b-alpha.XXXXXX")"
+
+# cleanup 由 `trap … EXIT` 调用，shellcheck 看不见这种间接调用 → SC2329 假阳性。
+# shellcheck disable=SC2329
+cleanup() {
+  if [ "$KEEP" = 1 ]; then
+    printf '\n（保留 scratch：%s）\n' "$SCRATCH"
+    return 0
+  fi
+  # 删前再校验一次。仅"变量里存着我建的路径"不够——中途被换成指向别处的
+  # 符号链接就会写穿。故确认：路径形状仍是本次 mktemp 的、仍是非符号链接的
+  # 目录、且属于本用户。任一不符即跳过并告警。
+  case "$SCRATCH" in
+    "${TMPDIR:-/tmp}"/dsh-t0b-alpha.*)
+      if [ -d "$SCRATCH" ] && [ ! -L "$SCRATCH" ] && [ -O "$SCRATCH" ]; then
+        rm -rf "$SCRATCH"
+      else
+        printf '\n警告: %s 已不是本次创建的目录，跳过清理。\n' "$SCRATCH" >&2
+      fi ;;
+    *)
+      printf '\n警告: %s 不在预期临时根下，跳过清理。\n' "$SCRATCH" >&2 ;;
+  esac
+}
+trap cleanup EXIT
+
 FAILED=0
 pass() { printf '  \033[32mPASS\033[0m %s\n' "$1"; }
 fail() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; FAILED=$((FAILED + 1)); }
@@ -64,10 +100,9 @@ deploy() { # $1=digest  $2=版本  $3=可选的失败注入点
   return 0
 }
 
-rm -rf "$SCRATCH"
 mkdir -p "$SCRATCH/releases" "$SCRATCH/state"
 cd "$SCRATCH" || exit 1
-echo "scratch: $SCRATCH"
+echo "scratch: $SCRATCH（本脚本 mktemp 自建；退出时清理，--keep 可保留）"
 echo "user: $(id -un) (uid=$(id -u))，非 root: $([ "$(id -u)" != 0 ] && echo 是 || echo 否)"
 
 D1="$(printf 'a%.0s' {1..40})"; D2="$(printf 'b%.0s' {1..40})"
@@ -145,8 +180,18 @@ fi
 if ls -d releases/.staging-* >/dev/null 2>&1; then fail "重跑留下了 staging 残留"; else pass "无 staging 残留"; fi
 
 step "7 并发切换"
-atomic_switch "$D1" & atomic_switch "$D2" &
-wait
+# 收集**每个后台 job 的退出码**，不只查最终链接目标——只查目标会漏掉
+# 「一个失败但另一个成功，最终链接恰好正确」这种情况。
+atomic_switch "$D1" & p1=$!
+atomic_switch "$D2" & p2=$!
+rc1=0; rc2=0
+wait "$p1" || rc1=$?
+wait "$p2" || rc2=$?
+if [ "$rc1" -eq 0 ] && [ "$rc2" -eq 0 ]; then
+  pass "两个并发切换都成功退出（rc=0/0）"
+else
+  fail "并发切换有失败：rc=${rc1}/${rc2}（只看最终链接目标会漏掉这种）"
+fi
 target="$(readlink current)"
 if [ "$target" = "$D1" ] || [ "$target" = "$D2" ]; then
   pass "并发后 current 指向完整 release（${target:0:8}…），无半成品"
@@ -157,10 +202,10 @@ if ls -d current.tmp.* >/dev/null 2>&1; then fail "并发留下临时链接残�
 
 echo
 if [ "$FAILED" -eq 0 ]; then
-  echo "全部通过。清理 scratch。"
-  rm -rf "$SCRATCH"
+  echo "全部通过。"          # 清理交给 trap（并复用它的删前校验）
   exit 0
 else
-  echo "$FAILED 项失败。保留 $SCRATCH 供排查。"
+  KEEP=1                     # 失败时保留现场供排查
+  echo "$FAILED 项失败。保留 scratch 供排查（见下方的路径）。"
   exit 1
 fi
