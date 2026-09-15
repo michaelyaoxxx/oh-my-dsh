@@ -19,6 +19,7 @@ make dev       # 启动 DSH Web（$DSH_HOME=./.dsh，插件 link 挂载，改插
 ⚠️ 已知一次 boot 竞态（harness 上游，非平台特有）：偶发崩在 `cannot get property "webServer" without inject`，**重跑 `make dev` 一次即可**，详见 [docs/backlog.md](docs/backlog.md) B13。
 
 - 插件开发：[docs/plugin-dev.md](docs/plugin-dev.md)
+- 密钥静态存储设计：[docs/secret-storage-design.md](docs/secret-storage-design.md)（Backlog B14；密钥静态非明文的落地路径）
 - 远程部署：[docs/deploy.md](docs/deploy.md)（操作手册）・ ⚠️ 接手部署先读 [docs/deploy-handoff.md](docs/deploy-handoff.md)（**该路径从未跑通**）
 - 远程访问（在外用手机/另一台电脑）：[docs/remote-access.md](docs/remote-access.md)（含第三方方案尽调 [docs/dsh-remote.md](docs/dsh-remote.md)）
 - 遗留问题：[docs/backlog.md](docs/backlog.md)（**还欠什么**，完成即删）
