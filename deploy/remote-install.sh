@@ -143,6 +143,11 @@ mkdir -p plugins "$DSH_HOME/profiles"
 # ⚠️ 此前这里**完全不过滤**，会安装并构建 dsh-tui（runtimeScope=excluded、no-build），
 # 与 setup.sh 的过滤逻辑互相矛盾——同一份 manifest 两个消费者给出相反解释。
 # 见 docs/reviews/2026-09-15-incremental-design-review.md P0-1。
+# ⚠️ 本段（has_package_manager … plugin_install）与 scripts/setup.sh 的对应段
+#    **逐字节相同**（11 个函数），而**没有任何门禁保证它们同步**——make check 只静态检查
+#    目录查询那一行的形态。改动必须**两处一起改**：已有的先例是 `ret=$?` 的 fail-open
+#    必须修两次才对齐（a4a3808 修 setup、a25af8b 修 remote）。合并成共享库需要单独的设计
+#    （评审 X-1：.superpowers/sdd/2026-09-15-component-catalog-lifecycle/task-8-9-review.md §8）。
 # 无 packageManager 的插件仓（如 modlens、dsh-market）corepack 在仓内回落 latest 不可靠；
 # 经 harness 目录解析 harness pin 的 pnpm（服务器上 corepack 同样按 harness packageManager
 # 解析），--dir 让命令仍在插件仓内执行。install 与 build 同此路径——按调用点各写一遍判定
@@ -292,6 +297,21 @@ pe_run_build() { # $1=rel（CI=true 同上：build 内部的 deps 校验会补�
 
 # shellcheck source=scripts/prepare-executor.sh
 . "$ROOT/scripts/prepare-executor.sh"
+
+# 计划非空断言（fail closed）：catalog **合法但为空**时（例如 runtimeScope 全被标成
+# excluded），`--plan prepare` rc=0 且 stdout 无内容 ⇒ 下面的循环一次都不执行 ⇒
+# 打印"完成"、rc=0，却什么都没准备。上一道守卫判的是**查询的退出码**，挡不住这一类。
+# 判据取**行数**而非文案：数**含非空白字符**的行（纯空白行不算——生产端不会产出它，
+# 但空白行本来也不携带信息；尾部空行因此天然不影响判定）。
+_PLAN_LINES=0
+while IFS= read -r _plan_line; do
+  case "$_plan_line" in *[![:space:]]*) _PLAN_LINES=$((_PLAN_LINES + 1)) ;; esac
+done <<< "$PREPARE_PLAN"
+if [ "$_PLAN_LINES" -eq 0 ]; then
+  echo "错误: \`--plan prepare\` 返回了空计划——组件目录合法但没有任何组件需要准备。" >&2
+  echo "      这通常意味着 config/components.json 写错了（例如 runtimeScope 全被标成 excluded）。" >&2
+  exit 1
+fi
 
 while IFS=$'\t' read -r rel mode; do
   [ -n "$rel" ] || continue

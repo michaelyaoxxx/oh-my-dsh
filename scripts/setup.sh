@@ -98,6 +98,11 @@ done
 # prepareMode=source-build），与插件同走一条路：scripts/prepare-executor.sh 准备**一次**。
 # 它需要的 CI=true 不是"多一个步骤"，而是一条**环境策略**——住在下面的钩子里（完整缘由见彼处）。
 #
+# ⚠️ 本段（has_package_manager … plugin_install）与 deploy/remote-install.sh 的对应段
+#    **逐字节相同**（11 个函数），而**没有任何门禁保证它们同步**——make check 只静态检查
+#    目录查询那一行的形态。改动必须**两处一起改**：已有的先例是 `ret=$?` 的 fail-open
+#    必须修两次才对齐（a4a3808 修 setup、a25af8b 修 remote）。合并成共享库需要单独的设计
+#    （评审 X-1：.superpowers/sdd/2026-09-15-component-catalog-lifecycle/task-8-9-review.md §8）。
 # dsh-web 是 pnpm workspace，自带 pnpm-lock.yaml → --frozen-lockfile 可行；
 # 根 package.json 有 build（pnpm -r build）。
 # 无 packageManager 的插件仓（如 modlens、dsh-market）corepack 在仓内向上找不到 pin 会回落
@@ -191,11 +196,6 @@ plugin_install() { # $1=目录 $2=安装子命令（pnpm 用 install，npm 用 c
   return "$ret"
 }
 
-# 插件构建统一用短 TMPDIR。macOS 的 os.tmpdir() 是 /var/folders/<长哈希>/T（本次实测
-# 某插件的 unix socket 路径因此达到 105 字节，超过 macOS sun_path 上限 104 → listen EINVAL）。
-# /tmp 在 macOS 与 Linux 都存在且足够短；只作用于插件循环，不动 harness 构建。
-export TMPDIR=/tmp
-
 # 谁参与安装/构建由**组件目录**决定，选择器是具名的 `prepare`（= runtimeScope:required），
 # 语义定义在 scripts/check-components.mjs 的 NAMED_SELECTORS —— **只定义一处**。
 # 例：dsh-tui 是 metadata-only（终端前端，与 dsh-web-app 抢同一批 base 行），
@@ -241,11 +241,24 @@ PREPARE_PLAN="$(node scripts/check-components.mjs --plan prepare)"
 #    两处各自决定怎么准备）。**只对 harness 设**：CI 会改变一大批 npm/pnpm 生命周期脚本的
 #    语义，外泄到别的组件是未经验证的行为变更——故用 `local` + `export` 把作用域钉在本函数内
 #    （实测：函数内子进程可见 CI=true，函数返回后恢复原状/未设）。
+#
+# ⚠️ **为什么插件要 TMPDIR=/tmp（同样别把这两个 export 当多余的删掉）**
+# 插件构建统一用短 TMPDIR。macOS 的 os.tmpdir() 是 /var/folders/<长哈希>/T（实测某插件的
+# unix socket 路径因此达到 105 字节，超过 macOS sun_path 上限 104 → listen EINVAL）；
+# /tmp 在 macOS 与 Linux 都存在且足够短。
+# **只对非 harness 组件设**——与上面 CI=true 同一条原则（环境策略逐组件裁定）：
+# 这条规避针对的是某个插件里那条长 socket 路径，harness 没有这个需要；而 harness 是上游
+# submodule，改变它构建期 `os.tmpdir()` 的落点是一次**未经验证的语义变更**（T8 起它曾被
+# 一个全局 export 波及，评审 T8-1 指出后收窄回组件级）。服务器侧不需要：Linux 默认
+# TMPDIR 即 /tmp（deploy/remote-install.sh 的同一组钩子因此不设它）。
 pe_install() { # $1=rel  $2=frozen|nonfrozen
   local rel="$1" d="$1/"
   if [ "$rel" = "harness" ]; then
     local CI=true
     export CI
+  else
+    local TMPDIR=/tmp   # 短 TMPDIR：只给插件，理由见上（harness 保持默认）
+    export TMPDIR
   fi
   if [ -f "${d}pnpm-lock.yaml" ]; then
     plugin_install "$d" install --frozen-lockfile
@@ -261,12 +274,30 @@ pe_run_build() { # $1=rel（CI=true 同上：build 内部的 deps 校验会补�
   if [ "$1" = "harness" ]; then
     local CI=true
     export CI
+  else
+    local TMPDIR=/tmp   # 短 TMPDIR：只给插件，理由见上（harness 保持默认）
+    export TMPDIR
   fi
   plugin_run "$1/" run build
 }
 
 # shellcheck source=scripts/prepare-executor.sh
 . "$ROOT/scripts/prepare-executor.sh"
+
+# 计划非空断言（fail closed）：catalog **合法但为空**时（例如 runtimeScope 全被标成
+# excluded），`--plan prepare` rc=0 且 stdout 无内容 ⇒ 下面的循环一次都不执行 ⇒
+# 打印"完成"、rc=0，却什么都没准备。上一道守卫判的是**查询的退出码**，挡不住这一类。
+# 判据取**行数**而非文案：数**含非空白字符**的行（纯空白行不算——生产端不会产出它，
+# 但空白行本来也不携带信息；尾部空行因此天然不影响判定）。
+_PLAN_LINES=0
+while IFS= read -r _plan_line; do
+  case "$_plan_line" in *[![:space:]]*) _PLAN_LINES=$((_PLAN_LINES + 1)) ;; esac
+done <<< "$PREPARE_PLAN"
+if [ "$_PLAN_LINES" -eq 0 ]; then
+  echo "错误: \`--plan prepare\` 返回了空计划——组件目录合法但没有任何组件需要准备。" >&2
+  echo "      这通常意味着 config/components.json 写错了（例如 runtimeScope 全被标成 excluded）。" >&2
+  exit 1
+fi
 
 while IFS=$'\t' read -r rel mode; do
   [ -n "$rel" ] || continue

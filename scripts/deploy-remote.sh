@@ -431,6 +431,22 @@ if [ -n "$SUB_DIRTY" ]; then
   echo "请到对应 submodule 内提交或还原后重试。" >&2
   exit 1
 fi
+# ── 组件 materialized 校验：把服务器侧的**永久盲区**降级为部署前必查 ──────────────
+# 为什么必须在这里（**本地、上传之前**）做：同步到服务器的是**没有 git 元数据的树**
+# （RSYNC_ARGS 带 `--exclude '.git'`），而 `tracked-prebuilt` 组件的
+# 「声明的运行入口确实被 git 跟踪」这条不变量要对子仓跑 `git ls-files`——在没有 .git 的
+# 树上**一律失败**，所以服务器侧**永远**跑不了它（deploy/remote-install.sh 的口径因此
+# 有意只到 catalog 阶段）。本脚本恰好是**本地执行、有 git、且在 rsync 之前**：同一份不变量
+# 在这里查得动，失败的代价也从「服务器已 --delete」降到「本地退出、远端一个字节没动」。
+# 与上面三条快照保真检查同属「写入远端之前必须成立」的前提，故放在同一段、任何主机之前。
+# （Task 9 原本把这条校验放在服务器侧的 remote-install.sh；因上述原因它收窄到 catalog 阶段，
+#  这条不变量的落点就是本行——评审 T9-3 的建议。）
+node "$ROOT/scripts/check-components.mjs" --require-materialized || {
+  echo "错误: 组件 materialized 校验失败（见上）。本地树不满足 fresh-clone 不变量（例如 tracked-prebuilt 组件的入口未被 git 跟踪），拒绝部署。" >&2
+  echo "请按提示修正后重试（子仓未初始化则先运行 make setup）。这是服务器侧无法复查的不变量，不能留到部署后再发现。" >&2
+  exit 1
+}
+
 [ -f "$HOSTS_FILE" ] || {
   echo "错误: 缺少 ${HOSTS_FILE}（真实服务器清单，已被 gitignore）。请复制 deploy/hosts.example 为 ${HOSTS_FILE} 并填写 user@host。" >&2
   exit 1
