@@ -89,28 +89,64 @@
 | 阶段 | 命令 | 何时 | 查什么 |
 | --- | --- | --- | --- |
 | **catalog** | `check-components.mjs` | `make setup` **之前**即可运行 | JSON schema、`.gitmodules` 双向集合、内部不变量 |
-| **materialized** | `check-components.mjs --require-materialized` | 子仓就绪后 | 需**读子仓**的不变量：产物跟踪状态、build script 存在性 |
+| **materialized** | `check-components.mjs --require-materialized` | 子仓就绪后——⚠️ **且只在有 git 元数据的检出上**（见下） | 需**读子仓**的不变量：产物跟踪状态、build script 存在性 |
 
 **CI 与 release 必须用 `--require-materialized`：任何 skip 都算失败。**
 
 「子仓未初始化就跳过并计数」可以保留，但**不能作为最终门禁**——否则 fresh clone 上
 一项都不查就能通过，那是 fail-open。
 
+### ⚠️ 部署树**跑不了** materialized——这是**树的属性**，不是配置问题
+
+`scripts/deploy-remote.sh:184` 的 rsync 带 `--exclude '.git'`，而 `--exclude` 对**每一层路径**生效
+⇒ **服务器那棵树里没有任何 git 元数据**。（`.gitmodules` **在**——它是被跟踪的普通文件，
+不是 git 元数据；`.git` 不在。）materialized 阶段靠 `git ls-files` 判「入口是否被跟踪」，
+在那棵树上**恒为不可判定**，所以它**永远无法**在服务器上运行。
+
+实测（2026-09-15，忠实 rsync 副本——同一份 `--exclude` 清单，副本内 `.git` 确认不存在）：
+
+| 命令 | 副本上的结果 |
+| --- | --- |
+| `check-components.mjs`（catalog） | **rc=0**；`materialized 检查：0 个已验；0 个跳过；**10 个因 git 元数据不可用而无法判定**` |
+| `check-components.mjs --require-materialized` | **rc=1**；`✗ --require-materialized：10 个组件无法在 materialized 阶段校验…严格模式下不允许跳过` |
+| `check-components.mjs --plan prepare` | **rc=0**，输出与本地源树**逐行一致** |
+
+> **为什么要写这一段**：不写的话，下一个人看到「服务器上没跑 materialized 阶段」，
+> 会以为那是**漏了一步**，然后去"补上"——**那会让每一次部署都失败**。
+> 那个 rc=1 是**必然**的，不是"环境没配好"，**不要在服务器侧加这条。**
+
+**故部署侧的分工是固定的，不要"修正"它：**
+
+| 在哪跑 | 跑什么 | 为什么 |
+| --- | --- | --- |
+| **本地**（源树，有 git 元数据） | `--require-materialized`——`scripts/deploy-remote.sh:444` | 这是**最后能查动它**的地方；而且此时**一个字节都还没写到远端**，失败的代价只是本地退出 |
+| **服务器**（部署树，无 git 元数据） | 只用 catalog 阶段的形式：`--list runtime:excluded`、`--plan prepare` | 查询路径**按设计就只跑 catalog 阶段**、不读子仓——这不是省事，是唯一跑得动的形态 |
+
+⚠️ 查询路径（`--list` / `--plan`）**故意**只跑 catalog 阶段：`--require-materialized` 与它们并用时
+**不会**因为「子仓没初始化」而失败。要严格校验就**别带** `--list` / `--plan`。
+
 ### 不变量
 
-**catalog 阶段：**
+**catalog 阶段**（**只看目录即可判定**，不需要子仓）：
 
 - `pinPolicy: tag` ⇒ `pinRef` 非空、不带 `refs/` 前缀、形如合法 ref
+  （⚠️ **最后半句尚未实现**——当前只查了非空与 `refs/` 前缀，见文末「实现状态」表）
 - `runtimeScope: excluded` ⇒ `releaseScope` **不含 `bundle`**
   （**不**要求 `releaseScope: []`：excluded 组件未来仍可能有独立制品、SBOM 或 provenance）
+- `runtimeScope` × `prepareMode` **正交约束**（真值表见上）：`excluded` ⇒ `prepareMode = none`；
+  `required` ⇒ `prepareMode != none`
 - `license` ∈ 受控词表且**不含 copyleft**
+
+> **`runtimeScope × prepareMode` 这一条比上面的归类更早落地。** 它**只看目录**即可判定，
+> 不读子仓——按本节「需读子仓的才归 materialized」的组织原则，它属于 **catalog 阶段**。
+> 本表此前把它列在 materialized 段，是**表自相矛盾**（T4 评审发现，2026-09-15 修正）。
+> 实现见 `scripts/check-components.mjs` 的 `validateCatalog()`，注释标着
+> 「catalog 阶段不变量（只看目录即可判定）」。
 
 **materialized 阶段：**
 
 - `prepareMode: tracked-prebuilt` ⇒ `main`、`types`、以及所有**无通配符**的 `exports` 目标，
   **均被 git 跟踪**（只查 `main` 不够：`exports` 指向未跟踪文件时 fresh clone 照样是坏的）
-- `runtimeScope: required` ⇒ `prepareMode != none`
-- `runtimeScope: excluded` ⇒ `prepareMode = none`
 - `prepareMode: source-build` ⇒ `package.json.scripts.build` 存在
 
 **一条只报警告、不阻断的：** `source-build` 且**任何会被加载的入口**已被 git 跟踪 ⇒
@@ -137,25 +173,34 @@
 
 ## 实现状态
 
-> ⚠️ **本文件描述的是模型（ADR-0005 采纳后应有的样子），不等于已经实现。**
-> 逐项核对当前实现，避免把设计读成保证：
+> ⚠️ **本文其余部分描述的是模型（ADR-0005 采纳后应有的样子），不等于已经实现。**
+> 下表**逐项**核对当前实现。**每行都必须附上能证明它的命令**——判据是跑出来的，不是读出来的。
+>
+> ⚠️ **注意有一行极性相反**：「删除 `packageManager`」的实现判据是**字符串不存在**。
+> 对其余各行「grep 到了 = 已实现」成立，对那一行**不成立**。判据要按**语义**定，不能一律套 `grep`。
 
 | 模型中的东西 | 当前实现状态 |
 | --- | --- |
-| 字段三分类 | **已定义**（本文）；`check-components.mjs` 尚未按类别校验 |
-| `prepareMode` 四值 | **未实现**——字段当前仍叫 `buildMode`，只有三值 |
-| `--plan prepare` | **未实现**——查询器目前只输出路径（`--list`） |
-| 两阶段校验 + `--require-materialized` | **未实现**——materialized 类不变量尚未落地 |
-| 删除 `packageManager` | **未实现** |
-| `version: 1 → 2` | **未实现** |
-| 删除 `setup.sh` / `remote-install.sh` 的 `main` 被跟踪启发式 | **未实现**——两处启发式仍在 |
-| 三处 fail-open（`--list` 绕过 `validate()`、两处 `2>/dev/null \|\| true`） | **未修复** |
-| **`gen-notices` 对 declared 字段标注免责** | **未实现**——生成物仍用「来源」「进制品」等**事实性表头**，读者无从知道这些列只是声明 |
-| **统一的 prepare 执行器** | **未实现**——`--plan` 只统一**决策数据**；动作执行仍是 setup 与 remote-install 两套 |
-| **setup 在子仓就绪后、执行计划前调用 materialized 严格校验** | **未实现** |
+| 字段三分类 | **已实现**（不只"已定义"）。`scripts/check-components.mjs:63` 的 `FIELD_CLASS` 声明每个字段的类别；`checkFieldClassValues()`（同文件 `:376`）校验类别**值**也在受控词表内；未登记分类的字段直接拒绝。验证：`node scripts/check-components.mjs` → rc=0；`bash scripts/probe-catalog.sh` 的 B3/B4/B5 钉住三条退化路径 |
+| `prepareMode` 四值 | **已实现**。字段已更名，`ENUM.prepareMode` 列出四值。验证：`grep -n "prepareMode: \['source-build'" scripts/check-components.mjs` → `:41` 含全部四值。⚠️ **当前 11 个组件只用到其中三个**（`source-build` / `tracked-prebuilt` / `none`），`install-only` 是**允许但暂无使用者**的取值——别把"没人用"读成"不支持" |
+| `--plan prepare` | **已实现**。验证：`node scripts/check-components.mjs --plan prepare` → rc=0，**10 行** `<path>\t<prepareMode>`（`prepareMode: none` 的 `dsh-tui` 不在计划里） |
+| 两阶段校验 + `--require-materialized` | **已实现**。验证：`node scripts/check-components.mjs` → rc=0（`materialized 检查：10 个已验；0 个跳过`）；`node scripts/check-components.mjs --require-materialized` → rc=0 且严格模式措辞生效（`0 个跳过——子仓未初始化（严格模式，跳过即失败）`） |
+| 删除 `packageManager` | **已实现**——⚠️ **本行判据是"字符串不存在"**。验证：`node -e 'const c=require("./config/components.json");console.log(c.components.some(x=>"packageManager" in x))'` → `false`。⚠️ 全仓仍有 `packageManager` 字样（`scripts/setup.sh`、`deploy/remote-install.sh`）——那些读的是**子仓自己的** `package.json`，正是本表声明的权威源。**它们不是本行要删的东西** |
+| `version: 1 → 2` | **已实现**。验证：`grep -n '"version"' config/components.json` → `"version": 2` |
+| 删除 `setup.sh` / `remote-install.sh` 的 `main` 被跟踪启发式 | **已实现**。两处脚本已无该启发式；跟踪判定改由 materialized 阶段统一做（`trackedState()`）。验证：`grep -n 'ls-files' scripts/setup.sh deploy/remote-install.sh` → 剩余命中**只有** `pnpm-workspace.yaml` 的脚手架判定，与本启发式无关 |
+| 三处 fail-open | **已修复**。① 查询路径绕过校验：`scripts/check-components.mjs:670` 改为分发**之前** `validateCatalog()` + `process.exit(1)`；② `scripts/link-plugins.sh:38`；③ `deploy/remote-install.sh:60`——后两处改为 `if ! _excluded="$(…)"` **显式判 rc**（只删 `\|\| true` 不够：`done < <(cmd)` 拿不到退出码，见两处注释） |
+| **`gen-notices` 对 declared 字段标注免责** | **已实现**。生成物表头为「来源（声明，未验证）」「进制品（声明，未验证）」，且**双向**钉住：`assertColumnClasses()` 要求带后缀的列在 `FIELD_CLASS` 里**真是** `declared`，不带后缀的列**不是**。验证：`grep -n "声明，未验证" THIRD-PARTY-NOTICES.md`；`node scripts/gen-notices.mjs --check` → rc=0 |
+| **统一的 prepare 执行器** | 🟡 **部分实现**。`scripts/prepare-executor.sh` 统一了**决策**（`case "$prepareMode"` 全仓仅一份，被 `scripts/setup.sh:285` 与 `deploy/remote-install.sh:299` 共同 source）。⚠️ **但动作原语仍是两份**：从 `plugin_install` 起的一整段（含带分支的 35 行 `plugin_install`）在两个调用方**逐字节相同**，**没有任何门禁保证它们同步**——见 [docs/backlog.md](../docs/backlog.md) **B11**。这笔账已经付过一次代价：`ret=$?` 的 fail-open 要修**两次**才对齐（`a4a3808` + `a25af8b`）。**别把本行读成"已实现"** |
+| **setup 在子仓就绪后、执行计划前调用 materialized 严格校验** | **已实现**。验证：`scripts/setup.sh:218` 的 `node scripts/check-components.mjs --require-materialized \|\| { …; exit 1; }`，在 `:223` 取计划**之前** |
+| **`pinRef` 形如合法 ref（而不只是非空）** | ❌ **未实现**。当前只查了**非空**与**不带 `refs/` 前缀**（`scripts/check-components.mjs:443-444`），**没有** ref 形态校验。⇒ `pinRef: "???"`、`pinRef: "a b"` 这类值能通过 catalog 阶段，直到 `check-pins.sh` 拿它去 fetch 才暴露。**这一项是上游不变量清单（本文件 `catalog 阶段` 那段）里唯一还没落地的一条** |
+| **完整的产物校验（最小加载 / 冒烟）** | ❌ **未实现**。`tracked-prebuilt` 只声称「**声明的运行入口已被 git 跟踪**」——那是一个**可执行判据**；"验证输出""验证所有产物"目前**没有**可执行判据，故本文件不使用这些说法（见上方「命名与措辞的诚实性」）。要落地得先定义"输出契约" |
 
 实现计划见 [ADR-0005](../docs/cicd/adr/0005-component-catalog-lifecycle.md) 的「实施约束」。
 **本表在实现推进后必须同步更新**——留着过期的状态表，比没有状态表更危险。
+
+> ⚠️ **本表更新时请连判据一起更新。** 本表曾整表过期（11 行全部停在实现之前），
+> 而其中一行的**极性**（「删除 `packageManager`」）与其余各行相反——
+> 照抄"grep 到了就是已实现"的判据会把它判反。**先想清楚"证明它成立的那条命令是什么"，再去跑。**
 
 ## 相关
 

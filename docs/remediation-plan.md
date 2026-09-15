@@ -177,7 +177,7 @@ B 只在某个具体状态被证明有真实迁移需求时才做。
 | **P1-1** release 绕过许可证内容门禁 | ✅ 成立（本轮引入） | ✅ 已修：verify / release.yaml / release.sh 三门同用 `check-all.sh --offline` |
 | **P1-2** 政策 fail-closed 而脚本 fail-open；MPL-2.0 与「不接纳任何 copyleft」矛盾 | ✅ 成立 | ⬜ 未修（见下） |
 | **P1-3** catalog 无 canonical URL，`gerrit-fork` 标签配 GitHub URL | ✅ 成立 | ⬜ 未修（见下） |
-| **P1-4** manifest 消费者 fail-open；`config/README.md` 不存在；`--list runtime` 文档错 | ✅ 成立 | 🟡 部分已修（`--list` 缺值改为报错、具名选择器）；`config/README.md` 与跨字段 schema 未做 |
+| **P1-4** manifest 消费者 fail-open；`config/README.md` 不存在；`--list runtime` 文档错 | ✅ 成立 | ✅ 已修（`--list` 缺值改为报错、具名选择器）；`config/README.md` 与跨字段 schema **已在 2026-09-15 组件目录轮收口**，见下节 |
 | **P1-5** README/ADR 旧事实源、台账「提前完成」 | ✅ 成立 | 🟡 台账本次已纠偏；README/ADR 待改 |
 | **P1-6** 提交信息泄露内网主机 / 被 shell 替换破坏 | ✅ 成立（`ad22dd3` 含真实账号+IP；`1b52942` 正文被插入 11 行 `git submodule status`） | ⬜ 历史已推送，不改写；待补扫描（见下） |
 
@@ -194,8 +194,81 @@ B 只在某个具体状态被证明有真实迁移需求时才做。
 给某个脚本改一个字符串选择器，而不是先定义「哪个字段决定什么」）。故合并为一批设计任务，
 不在这轮顺手改。
 
+> ✅ **P1-4 的 schema 部分已于 2026-09-15 收口**（ADR-0005 + `config/README.md` + 两阶段校验），
+> 见上方「2026-09-15 组件目录生命周期轮」。**P1-2 / P1-3 / P1-6 仍未修**——
+> 它们要的是制品链与共享脚本库的接口，与本轮的字段语义不是同一件事。
+
 **P1-6 的历史泄露不可撤销**：`ad22dd3` 已在远端。私网 IP 不是凭据，且仓库当前为私有；
 处理方式是**补扫描防再犯**（提交正文检测 host/IP/凭据模式）而不是改写已共享历史。
+
+## 2026-09-15 组件目录生命周期轮（ADR-0005，收口 P1-4 的 schema 部分）
+
+**范围**：把 [ADR-0005](cicd/adr/0005-component-catalog-lifecycle.md) 从「决策」推到「实现」。
+12 个任务的计划见 [plans/2026-09-15-component-catalog-lifecycle.md](superpowers/plans/2026-09-15-component-catalog-lifecycle.md)，
+实施过程（含每次评审）见 `.superpowers/sdd/2026-09-15-component-catalog-lifecycle/`。
+**提交范围**：`bd7d265..`（49 个提交，ADR 起算）。
+
+> ⚠️ **本节 T 编号与上方总表的 T 编号不是同一套。** 总表的 T0a-T9 来自 2026-09-14 review
+> 的第二轮整改清单；本节的 T1-T11 是**组件目录这一轮自己的任务切分**。
+> 两者只是恰好都用了 "T"——**不要交叉引用**。
+
+### 逐项结果（以实现后的实测为准，不照抄计划）
+
+| 模型中的东西 | 结果 | 证据 |
+| --- | --- | --- |
+| 字段三分类 | ✅ | `check-components.mjs` 的 `FIELD_CLASS` + `checkFieldClassValues()`；`probe-catalog.sh` B3/B4/B5 |
+| `prepareMode` 四值 | ✅ | `ENUM.prepareMode`；⚠️ 11 个组件实际只用到三个，`install-only` 允许但暂无使用者 |
+| `--plan prepare` | ✅ | `node scripts/check-components.mjs --plan prepare` → rc=0，10 行 |
+| 两阶段校验 + `--require-materialized` | ✅ | 两条命令 rc=0（`10 个已验；0 个跳过`） |
+| 删除 `packageManager` | ✅ | ⚠️ **判据极性相反**：`"packageManager" in 组件` → `false` |
+| `version: 1 → 2` | ✅ | `"version": 2` |
+| 删两处 `main` 被跟踪启发式 | ✅ | `setup.sh` / `remote-install.sh` 的剩余 `ls-files` 只服务 `pnpm-workspace.yaml` 脚手架判定 |
+| 三处 fail-open | ✅ | `check-components.mjs:670`；`link-plugins.sh:38`；`remote-install.sh:60` |
+| `gen-notices` 对 declared 字段免责 | ✅ | 生成物表头「（声明，未验证）」+ `assertColumnClasses()` 双向钉住 |
+| **统一的 prepare 执行器** | 🟡 **部分** | 统一了**决策**（`prepare-executor.sh`）；**动作原语仍是两份** → [backlog.md](backlog.md) **B11** |
+| setup 计划前调 materialized 严格校验 | ✅ | `scripts/setup.sh:218`（在 `:223` 取计划之前） |
+| **`pinRef` 形如合法 ref** | ❌ **未实现** | 只查了非空与不带 `refs/` 前缀（`check-components.mjs:443-444`） |
+| **完整的产物校验（最小加载/冒烟）** | ❌ **未实现** | 无可执行判据；`tracked-prebuilt` 只声称「入口被 git 跟踪」 |
+
+**两处仍未实现，均已在 [config/README.md](../config/README.md) 的实现状态表里如实标出**——
+不因为"大部分做了"而藏起来。
+
+### 本轮修正的两处文档错误
+
+**① 阶段归属错误（表自相矛盾）。** `runtimeScope × prepareMode` 正交约束被列在 **materialized**
+阶段，但它**只看目录**即可判定——按该表自己的组织原则（"需读子仓的才归 materialized"）
+属于 **catalog** 阶段。T4 的实现一开始就在 catalog 阶段，是**文档落后于实现**。
+`config/README.md` 与 ADR-0005 的正文都改了（ADR 侧带「实施修正」标记，约束内容一字未改）。
+
+**② 部署树的物理事实。** `scripts/deploy-remote.sh:184` 的 rsync 带 `--exclude '.git'`
+⇒ **服务器树没有任何 git 元数据** ⇒ materialized 阶段在那里**永远无法运行**。
+这**不是配置问题，是那棵树的属性**。已写进 `config/README.md` 与 ADR-0005 的「实施偏离记录 D1」。
+
+> **为什么这条必须落盘**：不写的话，下一个人看到「服务器没跑 materialized 阶段」，
+> 会以为那是**漏了一步**，然后"补上"——**那会让每一次部署都失败**。
+
+### ⚠️ 本轮暴露的一条方法学教训：实测数字会过期，判据不会
+
+计划里（以及 `deploy/remote-install.sh` 的注释里）写着服务器树模拟的实测结果是
+「`validate()` rc=1、13 条 ✗」。**2026-09-15 复测不成立**：忠实 rsync 副本上
+`validate()`（非严格）实测 **rc=0**。
+
+原因是那条测量发生在 `80f301a`（「查不了」不再说成「坏了」）**之前**——当时
+`trackedState()` 是布尔的，git 元数据不可用被误报成「确认未被跟踪」。三分法落地后，
+同一棵树改为报「**因 git 元数据不可用而无法判定**」。
+
+**结论（服务器侧不能用 materialized）不变，变的是依据的措辞**：
+
+| 命令 | 忠实副本上的实测（2026-09-15 复测） |
+| --- | --- |
+| `check-components.mjs` | rc=0；`0 个已验；0 个跳过；10 个因 git 元数据不可用而无法判定` |
+| `check-components.mjs --require-materialized` | **rc=1**（"无法判定"在严格模式下即失败） |
+| `check-components.mjs --plan prepare` | rc=0，与本地逐行一致 |
+
+教训：**写进长期文档的应该是判据（那棵树没有 git 元数据 ⇒ 该阶段不可判定），
+而不是某次运行的数字。** 数字要连同命令一起写，好让下一个人**重跑**而不是**照抄**。
+
+---
 
 ## 2026-09-14 review 的逐条处置
 

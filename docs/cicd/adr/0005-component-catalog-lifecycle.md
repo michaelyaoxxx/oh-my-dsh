@@ -75,13 +75,20 @@
 - `pinPolicy: tag` ⇒ `pinRef` 非空、不带 `refs/` 前缀、形如合法 ref。
 - `runtimeScope: excluded` ⇒ `releaseScope` **不含 `bundle`**。
   （**不**要求 `releaseScope: []`：excluded 组件未来仍可能有独立制品、SBOM 或 provenance；过强的约束会挡住合理设计。）
+- `runtimeScope: required` ⇒ `prepareMode != none`。
+- `runtimeScope: excluded` ⇒ `prepareMode = none`。
+
+  > ⚠️ **实施修正（2026-09-15）**：上面两条正交约束在本 ADR 初稿里列在 **materialized 阶段**，
+  > **本 ADR 与 [config/README.md](../../../config/README.md) 都错了**。它们**只看目录**即可判定
+  > ——`runtimeScope` 与 `prepareMode` 是同一个组件对象上的两个字段，不需要读子仓。
+  > 按本节自己的组织原则（catalog = 只看目录 / materialized = 需读子仓），它们属于 **catalog 阶段**。
+  > T4 的实现（`validateCatalog()`）一开始就落在 catalog 阶段，是**文档落后于实现**。
+  > 此处**只是把两条搬到正确的段**，约束本身（内容、极性、判据）**一字未改**。
 
 **materialized 阶段（需读子仓）：**
 
 - `prepareMode: tracked-prebuilt` ⇒ **`main`、`types`、以及所有无通配符的 `exports` 目标，均被 git 跟踪**。
   （只查 `main` 不足：`exports` 指向未跟踪文件时，fresh clone 上组件照样是坏的。）
-- `runtimeScope: required` ⇒ `prepareMode != none`。
-- `runtimeScope: excluded` ⇒ `prepareMode = none`。
 - `prepareMode: source-build` ⇒ `package.json.scripts.build` 存在。
 
 **一条不写成不变量、只报警告：** `source-build` 且**任何会被加载的入口**已被 git 跟踪 ⇒ 构建**可能**弄脏 submodule（重建结果与提交版本逐字节一致时 Git 不会显示 dirty，如 `dsh-market` 的 `client/client.js`），进而触发部署的快照保真检查。这是**运维后果**，不是 schema 矛盾——本仓可以出于供应链政策选择源码重建，即使子仓恰好也提交了产物。**用警告让它可见，不用规则禁止它。**
@@ -152,3 +159,67 @@
 - **命名诚实性**：`tracked-prebuilt` 只声称「产物已被 git 跟踪」，**不声称「已验证」**。真正的验证（入口完整性、最小加载/冒烟）是后续工作，不得用当前命名暗示已经做到。
 - 新的动作计划必须在 **macOS arm64 与 Linux x86-64 两个平台**分别验证。
 - 顺带修正 [README.md](../../../README.md) 中把 `docs/superpowers/specs/` 称为"设计"的表述（与 AGENTS.md 冲突）。
+
+---
+
+## 实施偏离记录（2026-09-15）
+
+> **本节只追加，不改写上面任何结论。** 实施中与「实施约束」字面不同的地方记在这里，
+> 附**当时的依据**与**现在是否仍然成立**——因为依据会随代码演进而过期，而结论不会。
+
+### D1. `--require-materialized` 在服务器侧**不可用**——它的落点改到**本地**
+
+**字面约束**：「CI 与 release 使用 `--require-materialized`：任何 skip 都算失败。」
+
+**偏离**：`deploy/remote-install.sh`（跑在**服务器**上）**不**跑 materialized 阶段，
+只用 catalog 阶段口径（`--plan prepare` 查询路径自带的 `validateCatalog`）；
+materialized 严格校验改由 `scripts/deploy-remote.sh:444` 在**本地**执行。
+
+**依据（树的属性，不是配置问题）**：`scripts/deploy-remote.sh:184` 的 rsync 带
+`--exclude '.git'`，而 `--exclude` 对**每一层路径**生效 ⇒ **部署树里没有任何 git 元数据**。
+materialized 阶段靠 `git ls-files` 判「入口是否被跟踪」，在那棵树上**恒为不可判定**。
+
+> **为什么必须记住这件事**：不知道的人看到「服务器没跑 materialized」，
+> 会以为那是**漏了一步**，然后去"补上"——**那会让每一次部署都失败。**
+
+**本节写明的验收事实**（2026-09-15 实测，忠实 rsync 副本：同一份 `--exclude` 清单，
+副本内 `.git` 确认不存在）：
+
+| 命令 | 副本上的结果 |
+| --- | --- |
+| `check-components.mjs`（catalog） | **rc=0**；`0 个已验；0 个跳过；10 个因 git 元数据不可用而无法判定` |
+| `check-components.mjs --require-materialized` | **rc=1**（严格模式下「无法判定」即失败） |
+| `check-components.mjs --plan prepare` | **rc=0**，输出与本地源树逐行一致 |
+
+⚠️ **不要把 D1 理解成「约束被放松了」。** 它只是**换了执行位置**：从「服务器上、写坏之后」
+换到「本地、**一个字节都还没写到远端**之前」。本地那棵树有 git 元数据，查得动；
+而且失败时 `rsync --delete` 根本没开始跑。**这是加强，不是豁免。**
+
+### D2. 警告候选集收窄——已就地记录，此处只作索引
+
+「构建弄脏 submodule」这条警告的**候选集**从「全入口集」收窄为「**只算构建产物**」，
+理由与实测数字见上面「决策 4」的两条 ⚠️。**那是结论的一部分，改在正文里；本节不重复。**
+
+### D3. ⚠️ 一处**过期依据**仍留在代码注释里（未修，仅记录）
+
+`deploy/remote-install.sh` 的 D1 理由注释里写着：
+
+```
+#    （实测：服务器树模拟下 validate() rc=1、`--plan` rc=0，见 task-9-report.md。）
+```
+
+**其中 `validate() rc=1` 现在不成立**——忠实副本上 `validate()`（非严格）实测 **rc=0**。
+原因是那条测量发生在 `80f301a`（「查不了」不再说成「坏了」）**之前**：当时
+`trackedState()` 是布尔的，git 元数据不可用被当成「确认未被跟踪」，于是对
+`tracked-prebuilt` 组件报出 13 条 `✗ …**未被 git 跟踪**——fresh clone 上该组件是坏的`。
+`80f301a` 引入 `GIT_UNKNOWN` 三分之后，同样的树改为报「因 git 元数据不可用而无法判定」。
+
+**结论不变，依据的措辞过期了**：D1 成立的理由是「**无法判定**」，不是「一定失败」。
+`--require-materialized` 在这一侧 rc=1 依然成立（严格模式下「无法判定」即失败），
+`--plan` rc=0 也依然成立——**只有 `validate()` 那半句需要更新**。
+本 ADR **不改 `scripts/`**（超出本 ADR 的范围），故只在此登记。
+**下次有人改 `deploy/remote-install.sh` 时请顺手把那半句换成上面表格里的实测措辞。**
+
+> **这条偏离记录本身的教训**：把一次实测的**数字**写进长期文档，数字会随代码过期；
+> 写清**判据**（「那棵树没有 git 元数据 ⇒ 该阶段在那里不可判定」）才不会过期。
+> 上面的表之所以把命令与 rc 一起列出来，就是为了下次能**重跑**而不是**照抄**。
