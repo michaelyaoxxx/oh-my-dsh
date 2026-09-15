@@ -1115,7 +1115,7 @@ EOF
 
 **Files:**
 - Create: `scripts/prepare-executor.sh`
-- Modify: `scripts/setup.sh:216-246`（换成消费 `--plan` + 调 executor）
+- Modify: `scripts/setup.sh`（把 `INSTALL_LIST=` 到对应 `done` 的整段换成消费 `--plan` + 调 executor；**按锚点定位，别按行号**）
 - Modify: `scripts/check-all.sh`（executor 在 `scripts/*.sh` 内，已被 shellcheck 覆盖——无需改）
 
 **Interfaces:**
@@ -1124,7 +1124,11 @@ EOF
 
 - [ ] **Step 1: 先看清两处循环同构到什么程度**
 
-Run: `diff <(sed -n '216,246p' scripts/setup.sh) <(sed -n '208,241p' deploy/remote-install.sh)`
+Run（**用锚点而不是行号**——行号会随注释增删漂移，本计划已经漂过一次）：
+```bash
+diff <(sed -n '/^INSTALL_LIST=/,/^done/p' scripts/setup.sh) \
+     <(sed -n '/^PREPARE_LIST=/,/^done/p' deploy/remote-install.sh)
+```
 Expected: 主体逐行同构，差异只在 install 策略（本地容忍缺 lockfile、服务器直接报错）。**这同构正是 P0-1 的土壤**，也是本任务存在的理由。
 
 - [ ] **Step 2: 写 executor**
