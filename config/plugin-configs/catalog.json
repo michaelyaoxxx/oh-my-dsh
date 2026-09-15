@@ -1,0 +1,25 @@
+{
+  "$comment": "插件参数基线登记（单一事实源）。save-settings.mjs 按此对每个插件执行 seed（缺失才铺，绝不覆盖 live）/ save（导出回基线）/ secret 门禁。新增插件：在 plugin-configs/ 放一个基线文件 + 在此加一行。",
+  "version": 1,
+  "plugins": [
+    {
+      "id": "dsh-settings",
+      "desc": "DSH 用户设置文档（live=$DSH_HOME/settings.yaml）。所有走 ctx.settings → @deepseek-ai/dsh-settings-file 的插件（deepseek 官方 + 第三方）共用这一个文件，值是 namespace → section。",
+      "format": "yaml",
+      "live": "$DSH_HOME/settings.yaml",
+      "baseline": "dsh-settings.yaml",
+      "managedHeader": true,
+      "secretPolicy": "env-ref"
+    },
+    {
+      "id": "modsearch",
+      "desc": "modsearch 独立配置仓（live=$HOME/.modsearch/config.json，所有 harness 共享）。DSH 设置卡片与 CLI 读写同一文件；密钥走 TAVILY_API_KEY / EXA_API_KEY / FIRECRAWL_API_KEY 环境变量，基线上不携带字面密钥。",
+      "format": "json",
+      "live": "$HOME/.modsearch/config.json",
+      "baseline": "modsearch.json",
+      "managedHeader": false,
+      "secretPolicy": "none",
+      "chmod": "600"
+    }
+  ]
+}

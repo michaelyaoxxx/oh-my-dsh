@@ -1,0 +1,8 @@
+{
+  "engine": "",
+  "engines": {
+    "tavily": {
+      "enabled": true
+    }
+  }
+}

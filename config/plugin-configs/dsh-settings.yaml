@@ -1,0 +1,43 @@
+# 本仓插件自定义参数基线（versioned baseline）。
+#
+# 机制：DSH Web UI 里保存的插件参数经 @deepseek-ai/dsh-settings-file 落盘在
+# `$DSH_HOME/settings.yaml`（= .dsh/settings.yaml，gitignore 的一次性运行时目录）。
+# 本文件是把这些参数**版本化**的入口：
+#   - `make link-plugins` / `deploy/remote-install.sh` 在 settings.yaml **缺失**时
+#     seed 一份此基线（首次搭建 / 清空 .dsh / 服务器部署即恢复到与仓库一致的参数）；
+#     已存在的 live 文件**绝不覆盖**。
+#   - 在 UI 里改好参数后，跑 `make save-settings` 把 .dsh/settings.yaml 导回本文件，
+#     再走正常 review 提交。
+#
+# ⚠️ secret 卫生：值**只允许** apiKeyEnv 形式（引用环境变量名），**不要把字面密钥写进
+# 本文件**——save-settings 的导出门禁会拦截字面 apiKey/token/secret/password。真正的
+# 密钥放 .credentials.yaml（0600、gitignore），不进版本库。
+#
+# 顶层结构 = settings-file 的 namespace → section（与 ctx.settings 注册命名空间一一对应）。
+# 首次内容从 .dsh/settings.yaml 抄录（2026-09-15）。
+# 本文件顶部说明为手工维护区（marker 之上），marker 之下为 `make save-settings` 管理的
+# 内容区——导出时只重写这一区，头部说明永久保留。
+
+# >>> managed by make save-settings
+ui-onboarding:
+  welcomeNoticeVersion: 2026-08-13.1
+pet:
+  enabled: false
+dsh-web-ui-market:
+  enabled: false
+skin-custom-theme:
+  applied: false
+llm-pi-ai:
+  providers:
+    deepseek-v4-flash-local:
+      displayName: deepseek-v4-flash-local
+      apiKeyEnv: DEEPSEEK_V4_FLASH_LOCAL_API_KEY
+      api: openai-completions
+      baseURL: http://10.4.166.143:4000/api
+      models:
+        - id: deepseek-v4-flash-max
+          name: deepseek-v4-flash
+          contextWindow: 1000000
+agent-default-model:
+  provider: deepseek-v4-flash-local
+  model: deepseek-v4-flash-max

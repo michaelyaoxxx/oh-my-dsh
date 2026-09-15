@@ -17,10 +17,18 @@ LOG_STAMP := $(shell printf '%s-%s' "$$(date -u +%Y%m%dT%H%M%SZ)" "$$$$")
 #    于是 `v1.0;x` 这种串照样通过——守卫形同虚设。改用 -x 后可彻底避开 `$`。
 VERSION_RE := v?[0-9A-Za-z][0-9A-Za-z._-]*
 
-.PHONY: setup dev dev-tui deploy release link-plugins check help
+.PHONY: setup dev dev-tui deploy release link-plugins save-settings seed-configs check help
 
 help: ## 显示可用目标
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
+
+save-settings: ## 把本机各插件在 UI/CLI 里保存的参数导出回 config/plugin-configs/ 基线（进版本库前先改这个）
+	mkdir -p $(LOG_DIR)
+	set -o pipefail; node scripts/save-settings.mjs save 2>&1 | tee $(LOG_DIR)/save-settings-$(LOG_STAMP).log
+
+seed-configs: ## 按 config/plugin-configs/catalog.json 把缺失的插件配置 seed 到运行时（绝不覆盖 live）
+	mkdir -p $(LOG_DIR)
+	set -o pipefail; node scripts/save-settings.mjs seed 2>&1 | tee $(LOG_DIR)/seed-configs-$(LOG_STAMP).log
 
 check: ## 本地自检：组件/许可证/声明/pin/shellcheck（改完代码跑这个；CI 跑同一份清单）
 	# 不落盘日志：它是只读报告，输出本身就是结果，tee 只会增加噪声。

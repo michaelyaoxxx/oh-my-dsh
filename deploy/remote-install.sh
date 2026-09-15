@@ -481,6 +481,18 @@ for c in "${CANDIDATES[@]}"; do
 done
 
 mkdir -p "$DSH_HOME/profiles"
+
+# 插件配置持久化 seed：与 scripts/link-plugins.sh 同一个统一入口
+# （node "$ROOT/scripts/save-settings.mjs" seed），按 config/plugin-configs/catalog.json
+# 对每个登记插件「缺失才铺、绝不覆盖 live」——全新服务器部署即拥有与仓库一致的插件参数，
+# 服务器上人工/UI/CLI 改的内容永远优先。文件未配置时整段跳过（不阻断部署）。
+# 注意 modsearch 的 live 在 $HOME/.modsearch/：seed 写的是**本脚本运行环境**的 $HOME
+# （remote-install 经 sudo 以 root 执行、dsh.service 无 User= 亦跑 root，两者 $HOME 一致）；
+# 若将来给 service 配 User=，需保证同一 home。
+if [ -f "$ROOT/scripts/save-settings.mjs" ] && [ -f "$ROOT/config/plugin-configs/catalog.json" ]; then
+  node "$ROOT/scripts/save-settings.mjs" seed
+fi
+
 MOUNTED=0
 SKIPPED=()
 for c in "${CANDIDATES[@]}"; do

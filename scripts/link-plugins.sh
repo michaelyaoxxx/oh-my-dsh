@@ -218,6 +218,16 @@ for c in "${CANDIDATES[@]}"; do
 done
 
 mkdir -p "$DSH_HOME/profiles"
+
+# 插件配置持久化 seed（统一入口）：若本仓配置了 config/plugin-configs/catalog.json 与
+# scripts/save-settings.mjs，就按 catalog 对每个登记插件「缺失才铺、绝不覆盖 live」——DSH
+# settings（→ $DSH_HOME/settings.yaml）与独立配置仓（modsearch → ~/.modsearch/config.json）
+# 一起处理。两者缺一（未携带该能力的 checkout）则整段跳过，不改 make dev 的正常挂载；
+# 参数改好后用 `make save-settings` 导出回基线入版本库。与 deploy/remote-install.sh 同一入口。
+if [ -f "$ROOT/scripts/save-settings.mjs" ] && [ -f "$ROOT/config/plugin-configs/catalog.json" ]; then
+  node "$ROOT/scripts/save-settings.mjs" seed
+fi
+
 MOUNTED=0
 SKIPPED=()
 for c in "${CANDIDATES[@]}"; do
