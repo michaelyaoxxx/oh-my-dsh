@@ -610,6 +610,17 @@ EOF
 - Produces: `node scripts/check-components.mjs --plan prepare` → 每行 `<path>\t<prepareMode>`，只含 `runtimeScope: required` 的组件。消费方是 T8/T9 的 prepare executor。
 - Consumes: Task 4 的 `validateCatalog`。
 
+> ⚠️ **验收项（必须显式验，不是"顺带"）：目录非法时，`--list` 与 `--plan` 必须返回非 0。**
+>
+> 为什么单列：`deploy/remote-install.sh` **没有** `setup.sh:212` 那样的显式前置校验，直接
+> `PREPARE_LIST="$(node … --list prepare)"`。它靠 `set -euo pipefail` + `$()` 传播退出码来兜底
+> ——**这条链只在 `--list` 失败时返回非 0 才成立**。若实现成"打印错误但继续、rc=0、stdout 空"，
+> 则 `PREPARE_LIST` 为空 → 每个插件走「跳过」→ **部署"成功"却没装东西**。
+>
+> T4 评审提出该风险、控制器修正了它的方向（`set -e` 下现在确实是 fail-closed），
+> 但**它成立的前提写在 T5 这一侧**：请用例明确覆盖"非法目录下 `--list` rc≠0"。
+> （T9 会把 remote-install 的显式前置校验补上，让两边对称、不再依赖这条微妙语义。）
+
 - [ ] **Step 1: 加失败用例**
 
 追加（注意：`--plan` 的输出是**制表符分隔**，断言要匹配）：
@@ -1313,6 +1324,38 @@ done <<< "$PREPARE_PLAN"
 Run: `grep -c 'ls-files --error-unmatch "${main_entry' deploy/remote-install.sh`
 Expected: `0`
 
+- [ ] **Step 2b: 补上与 `setup.sh` 对称的显式前置校验（T4 评审发现）**
+
+**问题**：`scripts/setup.sh:212` 在读组件列表**之前**有一段显式校验：
+
+```bash
+node scripts/check-components.mjs || {
+  echo "错误: 组件目录校验失败（见上）。请先修正 config/components.json 与 .gitmodules 的一致性。" >&2
+  exit 1
+}
+```
+
+`deploy/remote-install.sh` **没有**这一段，直接 `PREPARE_LIST="$(node … --list prepare)"`。
+它靠 `set -euo pipefail` + `$()` 传播退出码兜底——**这条链只在 `--list` 失败时返回非 0 才成立**，
+是**隐式依赖**。任何人日后把那行包进 `|| true`（T7 正在别处删这种写法）就立刻变成 fail-open：
+`PREPARE_LIST` 为空 → 每个插件走「跳过」→ **部署"成功"却没装东西**。
+
+**改法**：在 `deploy/remote-install.sh` 的 `PREPARE_LIST=` 之前插入**同一段**校验
+（文案可随部署语境微调，但要 `exit 1`）。要点是**两条路径对称**，
+且**不依赖 `set -e` 的微妙传播语义**。
+
+- [ ] **Step 2c: 验证前置校验真的兜得住**
+
+Run（在**副本**上造非法目录，不要动真仓）：
+```bash
+T="$(mktemp -d)"; cp -R deploy scripts config .gitmodules "$T"/ 2>/dev/null
+# 把版本改成非法，使校验必然失败
+sed "s/\"version\": 2/\"version\": 99/" config/components.json > "$T/config/components.json"
+(cd "$T" && bash deploy/remote-install.sh) ; echo "rc=$?"
+```
+Expected: **非 0，且报的是"组件目录校验失败"**，而不是继续往下走。
+⚠️ 若它因**别的原因**失败（如缺 `harness/`），那是**假绿**——必须确认失败**发生在校验那一步**。
+
 - [ ] **Step 3: 确认两个消费者产出一致**
 
 Run: `diff <(node scripts/check-components.mjs --plan prepare) <(node deploy/../scripts/check-components.mjs --plan prepare)`
@@ -1533,6 +1576,18 @@ Expected: 用实际结果更新下表，**不要照抄计划**。
 ```
 
 **仍未实现的必须保留在表里并说明原因**（如"完整的产物校验（最小加载/冒烟）"）。
+
+- [ ] **Step 2b: 修正 README 里的「阶段归属」错误（T4 评审发现）**
+
+`config/README.md` 把 **`runtimeScope × prepareMode` 正交约束**列在 **materialized 阶段**，
+但 T4 把它实现进了 **catalog 阶段**（更早、更严）。按该表**自己的组织原则**（"需读子仓的才归 materialized"），
+**是表自相矛盾**——该约束只看目录即可判定，不需要子仓。
+
+改法：把这一条从 materialized 段**移到 catalog 段**，并加一句说明"实现比本表更早落地；
+表格按'需读子仓'组织，本约束无需子仓"。
+
+**同时补一行到状态表**：「`pinRef` 形如合法 ref（而不只是非空）」——**尚未实现**，
+当前只查了非空与 `refs/` 前缀（T4 实现）。不要因为"大部分做了"就把它藏起来。
 
 - [ ] **Step 3: 跑全量自检**
 
