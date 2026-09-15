@@ -1,7 +1,10 @@
 # config/ — 组件目录的字段字典
 
-本目录的 [`components.json`](components.json) 是**组件的单一事实源**：谁参与 CI、pin 在哪、谁进制品、
-谁进运行时，都由它说了算。
+本目录的 [`components.json`](components.json) 是**组件元数据的单一登记源**。
+
+⚠️ **"登记"不等于"保证"**：每个字段是否构成工程保证，取决于它的**分类**（下表）与
+**实现状态**（文末）。例如 `releaseScope` 与 `ciScope` 目前是 `declared`——
+它们记录意图，**没有任何东西读它们做决定**。
 
 **本文是字段语义的唯一定义处。** 新增消费者时先读这里，不要靠读脚本反推——
 `scripts/setup.sh` 曾把 `ciScope` 当成「要不要安装」，而它的真实语义是「CI job 参与范围」，
@@ -36,13 +39,13 @@
 
 | 字段 | 类别 | 取值 | 消费者 | 它**保证**什么 | 它**不**保证什么 |
 | --- | --- | --- | --- | --- | --- |
-| `name` | operational | 自由文本 | 诊断输出、notices | 组件在报告里的可读名 | 与子仓 `package.json` 的 `name` 一致（那是子仓的事） |
+| `name` | **declared** | 自由文本 | 诊断输出、notices（**均属展示**） | 组件在报告里的可读名 | 机器身份——**真正的机器身份是 `path`**；也不保证唯一或与子仓 `package.json` 的 `name` 一致 |
 | `path` | operational | 相对路径 | 所有 `--list` / `--plan` 调用点 | 组件在主仓的位置 | 该目录存在（未初始化时不存在） |
 | `pinPolicy` | operational | `tag` / `branch` | `check-pins.sh` | 用哪种语义比对 pin | 该 ref 在远端存在（那要联网查） |
 | `pinRef` | operational | tag 名或分支名 | `check-pins.sh` | 比对的目标 ref | 它指向的 commit（那由 gitlink 决定） |
 | `runtimeScope` | operational | `required` / `excluded` | `--plan prepare`、`--list runtime:excluded` | **是否属于我们的运行时组合** | 它是否可用（那要看 `prepareMode` 与构建是否成功） |
 | `prepareMode` | operational | 见下 | 构建动作计划 | **本仓对该组件采取什么准备动作** | 该动作会成功；也**不**描述子仓自身的性质 |
-| `license` | operational | SPDX 标识符（受控词表） | 词表校验、与 `package.json` 一致性、notices | 本仓**声明**的许可证 | 该组件的实际许可证（那由 `check-licenses.mjs` 读 `LICENSE` 文件判） |
+| `license` | operational | SPDX 标识符（受控词表） | 词表校验、与 `package.json` 声明的一致性、notices | 声明值**在受控词表内**；materialized 时与子仓 `package.json` 的 `license` **声明一致** | **真实许可证身份**，以及依赖树的合规性。`check-licenses.mjs` 只做**有限的反向风险检测**（认得出 copyleft 特征串就拒），**不是**许可证识别器 |
 | `sourceAuthority` | **declared** | `github` / `gerrit-fork` | 仅 notices 渲染 | 记录来源归属的**意图** | 当前 fetch URL 是什么（**目录里没有 URL**）；也未校验本地 `origin` |
 | `ciScope` | **declared** | `build` / `install` / `test` / `package` / `metadata` | 无行为消费者 | 记录该组件参与哪些 CI 阶段的**意图** | 真的会有对应的 CI job；更**不**表示"要不要安装" |
 | `releaseScope` | **declared** | `bundle` / `sbom` / `provenance` | 仅 notices 渲染 | 记录制品归属的**意图** | 制品链尚未实现——**目前没有任何东西读它做决定** |
@@ -60,24 +63,26 @@
 
 | `runtimeScope` | `prepareMode` | 允许 | 说明 |
 | --- | --- | --- | --- |
-| `required` | `source-build` | ✅ | 装依赖 → 构建 → 验证输出 |
-| `required` | `tracked-prebuilt` | ✅ | 装运行依赖 → **验证所有提交产物** → 不构建 |
+| `required` | `source-build` | ✅ | 装依赖并执行 build |
+| `required` | `tracked-prebuilt` | ✅ | 装运行依赖并校验入口已被跟踪，**不**执行 build |
 | `required` | `install-only` | ✅ | 装依赖，无构建步骤 |
 | `required` | `none` | ❌ | 矛盾：说它属于运行时，却不准备 |
 | `excluded` | `none` | ✅ | 不属于运行时，不准备 |
 | `excluded` | 其余三值 | ❌ | 矛盾：不属于运行时，却要准备 |
 
-**`prepareMode` 的四个取值：**
+**`prepareMode` 的四个取值**（「可判定动作」列 = 当前**有校验支撑**的部分）：
 
-| 值 | 动作 | 常见于 |
-| --- | --- | --- |
-| `source-build` | 安装依赖 → 执行 build → 验证输出 | 入口未提交的仓、workspace 根 |
-| `tracked-prebuilt` | 安装运行依赖 → 验证提交产物 → **不**执行 build | 入口与产物已提交在子仓里的仓 |
-| `install-only` | 安装依赖，无 build | 无需编译的运行时组件 |
-| `none` | 不准备 | metadata-only / 不属于运行时 |
+| 值 | 动作 | 当前**可判定**的动作 | 常见于 |
+| --- | --- | --- | --- |
+| `source-build` | 安装依赖 → 执行 build | 存在 `package.json.scripts.build` | 入口未提交的仓、workspace 根 |
+| `tracked-prebuilt` | 安装运行依赖 → 校验运行入口 → **不**执行 build | `main`、`types`、无通配符 `exports` 目标**均被 git 跟踪** | 入口与产物已提交在子仓里的仓 |
+| `install-only` | 安装依赖，无 build | —（无额外校验） | 无需编译的运行时组件 |
+| `none` | 不准备 | — | metadata-only / 不属于运行时 |
 
-⚠️ **命名诚实性**：`tracked-prebuilt` 只声称「产物**已被 git 跟踪**」，
-**不声称「已验证」**。真正的验证（入口完整性、最小加载/冒烟检查）是后续工作。
+⚠️ **命名与措辞的诚实性**：`tracked-prebuilt` 只声称「**声明的运行入口已被 git 跟踪**」，
+**不声称「所有产物已验证」**。当前**没有**统一的"输出契约"，
+所以"验证输出""验证所有产物"这类说法**没有可执行判据**，本文不使用。
+完整的产物校验（含最小加载/冒烟）是后续工作。
 
 ## 校验：两个阶段
 
@@ -138,6 +143,9 @@
 | `version: 1 → 2` | **未实现** |
 | 删除 `setup.sh` / `remote-install.sh` 的 `main` 被跟踪启发式 | **未实现**——两处启发式仍在 |
 | 三处 fail-open（`--list` 绕过 `validate()`、两处 `2>/dev/null \|\| true`） | **未修复** |
+| **`gen-notices` 对 declared 字段标注免责** | **未实现**——生成物仍用「来源」「进制品」等**事实性表头**，读者无从知道这些列只是声明 |
+| **统一的 prepare 执行器** | **未实现**——`--plan` 只统一**决策数据**；动作执行仍是 setup 与 remote-install 两套 |
+| **setup 在子仓就绪后、执行计划前调用 materialized 严格校验** | **未实现** |
 
 实现计划见 [ADR-0005](../docs/cicd/adr/0005-component-catalog-lifecycle.md) 的「实施约束」。
 **本表在实现推进后必须同步更新**——留着过期的状态表，比没有状态表更危险。

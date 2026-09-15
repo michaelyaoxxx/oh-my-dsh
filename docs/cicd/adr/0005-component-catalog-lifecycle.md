@@ -11,7 +11,11 @@
 
 `config/components.json` 被引入为组件的单一事实源（见 [ADR-0004](0004-intranet-control-plane-and-data-residency.md) 之后的超级仓治理改动）。但**有了单一事实源，不等于有了单一语义**：
 
-- **字段语义没有定义处。** 14 个字段里，真正影响行为的只有少数几个。`ciScope` 看起来像「要不要安装这个组件」，实际语义是「CI job 参与范围」——`scripts/setup.sh` 据此判断安装，导致 **6 个 `runtimeScope: required` 的源码构建插件在全新环境被整批跳过**（本地因旧的 `node_modules` 存在而未暴露，CI 与 release 都调 `make setup`，因此必然崩）。与此同时 `deploy/remote-install.sh` **完全不过滤**，连 excluded 的 `dsh-tui` 也要装要构建。**同一份目录，两个消费者给出相反解释。**
+- **字段语义没有定义处。** 15 个组件字段里，真正影响行为的只有少数几个。`ciScope` 看起来像「要不要安装这个组件」，实际语义是「CI job 参与范围」——`scripts/setup.sh` **曾据此**判断安装，**曾导致** 6 个 `runtimeScope: required` 的源码构建插件在全新环境被整批跳过（本地因旧的 `node_modules` 存在而未暴露，CI 与 release 都调 `make setup`，因此必然崩）；`deploy/remote-install.sh` 则走相反极端、完全不过滤。**同一份目录，两个消费者给出相反解释。**
+
+  > 这两处**症状**已于 `a4bfd76` 修复（两者改用同一个具名选择器 `prepare`）。
+  > 本 ADR 处理的是**根因**：为什么"选错字段"这件事没有被任何人发现——
+  > 因为字段语义从来没有定义处。
 - **声明与事实分叉且无人校验。** 实测 10 个组件，`dsh-agent-teams` 声明 `prebuilt-verified` 但其 `lib/` 无任何 Git 跟踪文件；`dsh-at-file` 声明的构建模式与其入口已提交的事实不符。两者都靠 `setup.sh` 里一条**内隐启发式**（「根 `main` 被 git 跟踪即跳过构建」）在默默纠正——**声明的字段从未被读过，因此错了也没人知道**。
 - **「无消费者」的字段看起来像生效了的保证。** `releaseScope: ["bundle"]` 写着「进制品」，而制品链尚未实现，没有任何东西读它做决定。**一个不存在的保证比没有声明更危险**——读者会据此认为某事已被覆盖。
 - **校验是 fail-open 的。** `--list` 分支绕过 `validate()`；`link-plugins.sh` 与 `remote-install.sh` 用 `2>/dev/null || true` 吞掉目录查询失败并退化为空集；生成物消费者直接解析原始 JSON。**最需要目录保护的路径，恰恰在目录解析失败时继续执行。**
@@ -22,8 +26,8 @@
 
 | 类别 | 定义 | 现状 |
 | --- | --- | --- |
-| **operational** | 影响**执行、门禁或发布结果** | `path`、`pinPolicy`、`pinRef`、`runtimeScope`、`prepareMode`、`license`、`name` |
-| **declared** | 可被**展示/生成器**读取，但**无行为执行、无真实性校验**，**不构成工程保证** | `sourceAuthority`、`ciScope`、`releaseScope`、`platforms`、`testProfile`、`stateSchema`、`notes` |
+| **operational** | 影响**执行、门禁或发布结果** | `path`、`pinPolicy`、`pinRef`、`runtimeScope`、`prepareMode`、`license` |
+| **declared** | 可被**展示/生成器**读取，但**无行为执行、无真实性校验**，**不构成工程保证** | `name`、`sourceAuthority`、`ciScope`、`releaseScope`、`platforms`、`testProfile`、`stateSchema`、`notes` |
 | **derived** | 权威源在别处 → **从目录删除** | `packageManager`（事实源是各子仓自己的 `package.json`） |
 
 判据是**行为/门禁消费者**，不是「有没有任何代码读它」——`gen-notices.mjs` 会读 `releaseScope` 与 `sourceAuthority` 去**生成声明**，那是展示，不构成保证。
@@ -43,7 +47,15 @@
 
 补 `install-only` 是为了消除「`no-build` 被迫等同于 excluded」的歧义：一个**无需编译但需要安装**的运行时组件此前无处安放。
 
-**查询器输出完整动作计划**（`--plan prepare` → `path + prepareMode`），local setup 与 remote build **消费同一份计划**，不再各自实现一套 `case`。
+**查询器输出动作计划**（`--plan prepare` → `path + prepareMode`）。
+
+⚠️ **但这只统一了「决策数据」，没有统一「动作执行」。** 若 setup 与 remote-install 各自
+实现一套 `case "$prepareMode"`，漂移只是从「选哪个字段」变成「怎么执行动作」——病没治好，
+只是换了个地方发作。实施必须二选一：
+
+- **（推荐）** 两者调用**同一个 prepare executor**；环境差异（本地允许非冻结安装、
+  服务器必须冻结安装）作为 executor 的 **policy 参数**传入，而不是各写一套；
+- 或保留两套执行器，但**必须有契约测试**证明两者对同一份计划产出等价动作。
 
 ### 3. 校验分两阶段；门禁路径必须要求 materialized
 
@@ -72,7 +84,7 @@
 - `runtimeScope: excluded` ⇒ `prepareMode = none`。
 - `prepareMode: source-build` ⇒ `package.json.scripts.build` 存在。
 
-**一条不写成不变量、只报警告：** `source-build` 且 `main` 已被 git 跟踪 ⇒ 构建会**弄脏 submodule**，进而触发部署的快照保真检查。这是**运维后果**，不是 schema 矛盾——本仓可以出于供应链政策选择源码重建，即使子仓恰好也提交了产物。**用警告让它可见，不用规则禁止它。**
+**一条不写成不变量、只报警告：** `source-build` 且 `main` 已被 git 跟踪 ⇒ 构建**可能**弄脏 submodule（重建结果与提交版本逐字节一致时 Git 不会显示 dirty，如 `dsh-market` 的 client 产物），进而触发部署的快照保真检查。这是**运维后果**，不是 schema 矛盾——本仓可以出于供应链政策选择源码重建，即使子仓恰好也提交了产物。**用警告让它可见，不用规则禁止它。**
 
 ## 后果
 
@@ -117,6 +129,11 @@
 - 重新生成 `THIRD-PARTY-NOTICES.md`。
 - **删除三处 fail-open**：`check-components.mjs` 的 `--list`/`--plan` 分支必须先跑 `validate()`；`link-plugins.sh` 与 `remote-install.sh` 的 `2>/dev/null || true` 必须去掉；`gen-notices.mjs` 复用同一个 validated loader，不再直接解析原始 JSON。
 - **两处旧启发式必须删除**（`setup.sh` 与 `remote-install.sh` 里的「`main` 被跟踪即跳过构建」），由 `prepareMode` 取代。
+- **必须有统一的 prepare 执行器**（或契约测试）——见「决策 2」的说明。只改查询器不改执行，漂移不解决。
+- **`gen-notices.mjs` 必须给 declared 字段标注免责**：当前生成物用「来源」「进制品」这类**事实性表头**，
+  读者无从知道这些列只是声明。分类若只活在字段字典里，生成物的读者仍会误解——**而生成物正是对外的那一份**。
+- **`setup.sh` 必须在子仓就绪后、执行动作计划之前调用 materialized 严格校验**：否则
+  「本机准备」这条路径上，materialized 类不变量永远不会被执行。
 - 存量修正：`dsh-agent-teams` → `source-build`；`dsh-at-file` → `tracked-prebuilt`；删除 `packageManager`。
 - **命名诚实性**：`tracked-prebuilt` 只声称「产物已被 git 跟踪」，**不声称「已验证」**。真正的验证（入口完整性、最小加载/冒烟）是后续工作，不得用当前命名暗示已经做到。
 - 新的动作计划必须在 **macOS arm64 与 Linux x86-64 两个平台**分别验证。
