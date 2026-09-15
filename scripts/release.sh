@@ -19,6 +19,17 @@ bash "$ROOT/scripts/check-pins.sh"
 # 3. 版本号
 VERSION="${1:-}"
 [ -z "$VERSION" ] && { echo "用法: make release VERSION=v0.1.0 或 bash scripts/release.sh v0.1.0" >&2; exit 1; }
+# 版本号**权威校验**（Makefile 侧那条是纵深防御，不是这里可以省的理由）。
+# 校验的是「能不能安全地当 tag 与文件名用」，不是严格 SemVer——本仓的 tag 形态
+# 由各上游仓决定（如 harness 的 `dsh-v0.1.5-rc.2`），强行套 SemVer 会误伤。
+# 这里拒绝的是空白、引号、`$`、反引号、`;` 等一切会在 shell/文件名/ref 名里
+# 改变语义的字符：git ref 本身也有禁用字符集，宁可在源头拦。
+case "$VERSION" in
+  *[!A-Za-z0-9._-]*)
+    echo "错误: VERSION 含非法字符：'${VERSION}'" >&2
+    echo "  只允许字母/数字/点/下划线/连字符（如 v0.1.0、dsh-v0.1.5-rc.2）。" >&2
+    exit 1 ;;
+esac
 case "$VERSION" in v*) ;; *) VERSION="v$VERSION";; esac
 git tag -l "$VERSION" | grep -q . && { echo "tag $VERSION 已存在（若上次推送失败：git tag -d $VERSION 后重试）" >&2; exit 1; }
 

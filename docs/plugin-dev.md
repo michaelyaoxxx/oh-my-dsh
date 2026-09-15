@@ -42,7 +42,18 @@ git commit -m "chore: bump dsh-web pin" && git push
 3. **安装构建**：全部交给 `scripts/setup.sh` 插件循环——`plugin_pnpm`（无 packageManager 经 harness pin）、`plugin_install`（无构建策略声明则 `--ignore-scripts`）、跳过构建判据（入口被跟踪）。验证：跑循环 + `git submodule foreach` 全 0 dirty + 产物存在。
 4. **挂载**：bundle patch 在自身目录即自动挂载；需要禁用/注入时写 `patches/*.yml`（顶层数组、`inject` 整表替换）。
 5. **dump 验证**：`pnpm dsh --profile dsh --dump-config` 出现新 section、inject 全解析、无 warn。
-6. **CI/docs 五处**：`verify.yaml`（分支 loop 或 tag loop）、`release.yaml` 快照清单、`release.sh` `check_pin`/`check_pin_tag`、`AGENTS.md` 稳定分支行、`README.md` plugins 行、spec 子仓清单/目录树/校验行。**tag pin 用 `rev-parse <tag>^{}`**——注释标签直接 rev-parse 返回标签对象哈希，与 HEAD 比对必假。
+6. **登记一处即可**：把组件写进 [`config/components.json`](../config/components.json)（`pinPolicy` / `pinRef` / `license` / `ciScope` / `releaseScope` / `runtimeScope` …）。这是**唯一**需要改的地方——CI 的 `verify.yaml`、`release.yaml`、`release.sh` 快照清单、AGENTS 与 README 都从它派生或只链接它。改完跑：
+
+   ```sh
+   node scripts/check-components.mjs      # 双向校验 + license 与组件自身声明核对
+   bash scripts/check-pins.sh             # pin 语义校验（tag 相等 / branch 祖先）
+   node scripts/gen-notices.mjs           # 重新生成第三方声明（它是合规文档，会 --check 拒过期）
+   ```
+
+   > 这一步**曾经**是「手工改五处」：`verify.yaml`、`release.yaml`、`release.sh` 的
+   > `check_pin`/`check_pin_tag`、`AGENTS.md` 稳定分支行、`README.md` plugins 行。
+   > 五份手工副本必然漂移（本仓实际漂过），已由组件目录 + `check-pins.sh` 取代。
+   > **tag pin 的比对仍须用 `rev-parse <tag>^{}`**——注释标签直接 rev-parse 返回标签对象哈希，与 HEAD 比对必假；这条逻辑现在收敛在 `check-pins.sh` 里。
 7. **收尾**：集成手册（`docs/superpowers/plans/YYYY-MM-DD-<name>-integration.md`）+ 新踩坑按症状补进下方常见问题；提交按 pin / scripts / ci / docs / 手册切分；最后用户跑 `make dev` 做 UI 验收。
 
 ## 常见问题

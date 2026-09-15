@@ -32,9 +32,18 @@ make deploy
 
 对每台服务器的流程（任一台失败则整体报错退出）：
 
-1. **预检**：免密 ssh 可达；服务器有 rsync / curl / systemctl。
-2. **快照**：把当前 `$DEPLOY_DIR` 整体快照到 `$DEPLOY_DIR-snapshot`（全新机器跳过），供失败时自动回滚。
-3. **同步**：rsync 主仓源码（含 submodule 检出内容）到 `$DEPLOY_DIR`，排除 `.git` / `.dsh` / `node_modules` 等本地状态与平台产物，经 sudo rsync 写入。
+1. **预检**：免密 ssh 可达；服务器有 rsync / curl / systemctl。以及**快照保真三层检查**——
+   rsync 同步的是**工作树**，而部署标识只写主仓 `HEAD`，两者不一致时落地字节与标识就对不上，
+   审计与回滚判断同时失效。故在写入远端**之前**逐层拒绝：
+
+   | 层 | 检查 | 为什么不能省 |
+   | --- | --- | --- |
+   | ① | 根仓工作树（tracked + untracked） | 未提交的脚本会被同步上去 |
+   | ② | 各 submodule 的 gitlink 是否偏离 pin（`+` / `-` / `U`），**`--recursive`** | 未初始化的空目录会被同步上去，服务器侧静默跳过 → 假成功 |
+   | ③ | 各 submodule 的**工作树内容**，**`--recursive`** | ② 只看 gitlink **指向**；改了文件没提交时 gitlink 仍是 pin |
+
+2. **快照**：把当前 `$DEPLOY_DIR` 整体快照到 `$DEPLOY_DIR-snapshot`（全新机器跳过），供失败时自动回滚。**快照排除 `.dsh/`**（状态不参与回滚，见下）。
+3. **同步**：rsync 主仓源码（含 submodule 检出内容）到 `$DEPLOY_DIR`，经 sudo rsync 写入。排除清单见脚本 `RSYNC_ARGS`——**它不只是 `.git` / `.dsh` / `node_modules`**：还包括 `log/`（本地开发日志，含隧道 URL、错误栈、绝对路径）、`.env*`、`.claude/`、`.netrc`、`*.log`。⚠️ `.gitignore` 只约束 Git，**对 rsync 无效**；新增任何会落地的本地目录时必须同步加进那里。
 4. **服务器侧安装**（`deploy/remote-install.sh`）：工具链校验（node / corepack / pnpm 解析）→ harness `pnpm install --frozen-lockfile` + build（原生依赖按服务器平台构建，严禁跨平台拷贝 node_modules）→ 各插件 `--frozen-lockfile` + build → 插件经 `dsh plugin --profile dsh add link:` 装入 `$DEPLOY_DIR/.dsh/profiles/dsh/` → 按 `$DEPLOY_DIR` 渲染 `dsh.service` 模板（`@DEPLOY_DIR@` 占位符）并安装到 `/etc/systemd/system/dsh.service`。
 5. **服务接管**：`systemctl daemon-reload` → `enable --now` → `restart`（unit 已由上一步渲染安装）。
 6. **健康检查**：在**服务器本机**轮询 `curl http://127.0.0.1:3080`（至多 60 秒），HTTP 状态码 `200/303/401` 均视为就绪——harness 对未认证请求返回 `401`（浏览器 token flow 是唯一认证路径，`401` = 认证 gate 在响应 = 服务已就绪）。DSH Web 只绑定 `127.0.0.1`（harness 有意限制，不监听外网），从外部访问请用 SSH 端口转发或反向代理。
@@ -45,8 +54,14 @@ make deploy
 
 部署前先把 `$DEPLOY_DIR` 快照到 `$DEPLOY_DIR-snapshot`；此后任一步（同步、服务器侧安装、服务重启、健康检查）失败，脚本自动回滚：
 
-1. 把 `$DEPLOY_DIR-snapshot` 整体恢复回 `$DEPLOY_DIR`（含上一版本的 node_modules 与 `.dsh` 运行态）；
-2. 恢复上一版本的 `dsh.service`（按 `$DEPLOY_DIR` 渲染）→ `systemctl daemon-reload` → 重启服务（重启为尽力而为，失败不影响产物已恢复的结论）。
+1. 把 `$DEPLOY_DIR-snapshot` 整体恢复回 `$DEPLOY_DIR`（含上一版本的 `node_modules` 与代码）。
+   ⚠️ **`.dsh/` 不在回滚范围内**（快照与恢复都带 `--exclude '.dsh/'`）：那是**状态**，
+   回滚代码不应该回滚用户数据。该约束在本仓的 `deploy-remote.sh` 与 `remote-install.sh`
+   里同时生效，**不是**「快照里恰好包含了运行态」。
+2. 恢复上一版本的 `dsh.service`（按 `$DEPLOY_DIR` 渲染）→ `systemctl daemon-reload` → 重启服务。
+   ⚠️ **重启是尽力而为的**（`systemctl restart dsh || true`）。因此「产物已回滚」**不等于**
+   「服务已恢复」——脚本不会为此假装成功，也不会证明运行中的进程加载的就是恢复后的那一份。
+   服务未能拉起时需人工介入。
 
 全新机器没有快照，失败时无法自动回滚，脚本会明确提示并报错，请登录服务器检查 `$DEPLOY_DIR` 状态。
 

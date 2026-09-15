@@ -33,8 +33,8 @@ make dev       # 启动 DSH Web（$DSH_HOME=./.dsh，插件 link 挂载，改插
 
 | 目录 | 说明 |
 | --- | --- |
-| `harness/` | DSH 主仓库 submodule（pin tag `dsh-v0.1.5-rc.2`） |
-| `plugins/` | 插件 submodule 集合（dsh-web pin `main`、dsh-better-sidebar pin tag `v0.18.1`、dsh-plugin-mineru pin `master`、modlens pin tag `v3.26.1`、dsh-automation pin 分支 `adapt/harness-0.1.5-rc.2`、dsh-market pin tag `v1.45.1`、dsh-agent-teams pin tag `v0.1.17-rc.1`、dsh-at-file pin tag `v0.7.0`、modsearch pin tag `v5.10.2`、dsh-tui pin tag `v0.10.1`），插件默认安装位置 |
+| `harness/` | DSH 主仓库 submodule。**pin 不在此复制**——见 [config/components.json](config/components.json) |
+| `plugins/` | 插件 submodule 集合，插件默认安装位置。**各插件的 pin / 许可证 / 是否进制品与运行时，一律以 [config/components.json](config/components.json) 为准**（`node scripts/check-components.mjs` 会与 `.gitmodules` 做双向校验） |
 | `.dsh/` | DSH 运行主目录（`$DSH_HOME`，运行时生成，gitignore） |
 | `scripts/` | 编排脚本（Makefile 是薄入口） |
 | `deploy/` | systemd unit + 服务器安装脚本 + hosts 模板 |
