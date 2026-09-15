@@ -614,6 +614,12 @@ for f in scripts/link-plugins.sh deploy/remote-install.sh; do
     f2_bad="文件里找不到该目录查询调用（用例过时，须复核）"
   elif printf '%s\n' "$f2_call" | grep -q '2>/dev/null'; then
     f2_bad="目录查询行仍吞错：$(printf '%s' "$f2_call" | tr -s ' ' | cut -c1-60)"
+  # 第二条判据：查询**仍走进程替换**。它不是"更严"而是**同一个 bug 的另一半**——
+  # `< <(cmd)` 拿不到 cmd 的退出码（已实测），所以哪怕不吞 stderr，"只删 `|| true`"
+  # 也照样带着空排除集跑到挂载那一步（非法目录下 dsh-tui 真的被挂进 profile dsh）。
+  # 判据不会误伤：这个查询的退出码**只能**经 `$()` 拿到，任何 `< <(该调用)` 必为 fail-open。
+  elif printf '%s\n' "$f2_call" | grep -qE '<[[:space:]]*<\('; then
+    f2_bad="目录查询仍走进程替换（退出码被丢弃，等同 fail open）：$(printf '%s' "$f2_call" | tr -s ' ' | cut -c1-60)"
   fi
   if [ -n "$f2_bad" ]; then
     printf '  %-44s %s\n' "F2 $f 目录查询不得吞错（静态检查）" "!! $f2_bad"; FAILED=$((FAILED + 1))
