@@ -8,6 +8,7 @@
 | [ADR-0002](0002-immutable-artifact-promotion.md) | Accepted | staging 与 production 晋级同一不可变制品 digest |
 | [ADR-0003](0003-hybrid-end-to-end-regression.md) | Accepted | 确定性 Mock 回归与小规模真实 DeepSeek 验证并用 |
 | [ADR-0004](0004-intranet-control-plane-and-data-residency.md) | Accepted | 内网双物理控制平面、敏感数据本地驻留、GitHub Actions 非发布权威 |
+| [ADR-0005](0005-component-catalog-lifecycle.md) | Accepted | 组件目录字段三分类、`prepareMode` 四值、校验分 catalog/materialized 两阶段 |
 
 ## 维护规则
 
