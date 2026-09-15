@@ -106,17 +106,24 @@ write_gitmodules() {
   done
 }
 
-# 一个字段齐全、值合法的组件条目。$1=name $2=path $3=额外字段的 JSON 片段（可选）
+# 一个字段齐全、值合法的组件条目。
+# $1=name  $2=path  $3=overrides（JSON **对象**文本，可选；同名键**覆盖**而非追加）
+#
+# 为什么用合并而不是把片段拼到对象尾部：拼接会产生**重复键**（如两个 runtimeScope），
+# JSON.parse 取最后一个——"能跑"，但读者无法判断哪个生效，换成严格解析器还会静默改变
+# 语义。fixture 自己也该遵守「一个字段一个值」，否则它就在示范本计划要治的病。
 good_component() {
-  cat <<EOF
-{
-  "name": "$1", "path": "$2", "sourceAuthority": "github",
-  "pinPolicy": "tag", "pinRef": "v1.0.0",
-  "ciScope": ["build"], "releaseScope": ["bundle"], "runtimeScope": "required",
-  "platforms": ["linux-x86_64"], "prepareMode": "source-build",
-  "testProfile": "vitest", "stateSchema": "none", "license": "MIT"$3
-}
-EOF
+  node -e '
+    const base = {
+      name: process.argv[1], path: process.argv[2], sourceAuthority: "github",
+      pinPolicy: "tag", pinRef: "v1.0.0",
+      ciScope: ["build"], releaseScope: ["bundle"], runtimeScope: "required",
+      platforms: ["linux-x86_64"], prepareMode: "source-build",
+      testProfile: "vitest", stateSchema: "none", license: "MIT",
+    }
+    const over = process.argv[3] ? JSON.parse(process.argv[3]) : {}
+    process.stdout.write(JSON.stringify({ ...base, ...over }))
+  ' "$1" "$2" "${3:-}"
 }
 
 run_case() { # $1=场景名  $2=期望(CAUGHT/GAP)  $3=构造函数名（调用前已设好 fixture）
@@ -300,6 +307,10 @@ Expected: A1/A2 = CAUGHT，A3 = GAP，且无 `!! 与预期不符`。
 3. 删除**所有** `"packageManager": "pnpm",` 行（10 处）。事实源是各子仓自己的 `package.json`。
 4. `dsh-tui` 的 `"runtimeScope": "excluded"` 保持不变（与新的 `prepareMode: none` 一致）。
 
+**同时**：`scripts/probe-catalog.sh` 的**夹具自检**里那一行 `write_catalog "[$(good_component ok plugins/ok)]" 1`
+必须改为 `... 2`。它原先用 v1 是对的（T1 时点），但本任务加上版本校验后，**自检自身会失败**，
+让下面 Step 4 的"A1/A2/A3 全过"变成一个红灯现场。
+
 - [ ] **Step 6: 同步校验器的词表与必需字段**
 
 `scripts/check-components.mjs`，把 `ENUM.buildMode` 一行替换为：
@@ -387,7 +398,7 @@ write_catalog "[$(good_component ok plugins/ok)]" 2
 write_gitmodules "plugins/ok"
 run_case "B1 合法分类（基线，应通过）"      GAP
 # 用一个未登记的字段名：它没有分类，说明有人加了字段却没登记分类
-write_catalog "[$(good_component ok plugins/ok ',"untrackedField": 1')]" 2
+write_catalog "[$(good_component ok plugins/ok '{"untrackedField":1}')]" 2
 write_gitmodules "plugins/ok"
 run_case "B2 出现未登记分类的字段"          CAUGHT
 ```
@@ -489,22 +500,22 @@ EOF
 ```bash
 echo
 echo "== C. catalog 阶段不变量 =="
-write_catalog "[$(good_component c1 plugins/c1 ',"pinRef": "refs/tags/v1"')]" 2
+write_catalog "[$(good_component c1 plugins/c1 '{"pinRef":"refs/tags/v1"}')]" 2
 write_gitmodules "plugins/c1"
 run_case "C1 tag pin 的 pinRef 带 refs/ 前缀"     CAUGHT
-write_catalog "[$(good_component c1 plugins/c1 ',"pinRef": ""')]" 2
+write_catalog "[$(good_component c1 plugins/c1 '{"pinRef":""}')]" 2
 write_gitmodules "plugins/c1"
 run_case "C2 tag pin 的 pinRef 为空"              CAUGHT
-write_catalog "[$(good_component c1 plugins/c1 ',"runtimeScope": "excluded"')]" 2
+write_catalog "[$(good_component c1 plugins/c1 '{"runtimeScope":"excluded"}')]" 2
 write_gitmodules "plugins/c1"
 run_case "C3 excluded 但 releaseScope 含 bundle"  CAUGHT
-write_catalog "[$(good_component c1 plugins/c1 ',"runtimeScope": "excluded", "releaseScope": ["sbom"]')]" 2
+write_catalog "[$(good_component c1 plugins/c1 '{"runtimeScope":"excluded","releaseScope":["sbom"]}')]" 2
 write_gitmodules "plugins/c1"
 run_case "C4 excluded + 仅 sbom（应允许）"        GAP
-write_catalog "[$(good_component c1 plugins/c1 ',"runtimeScope": "excluded", "prepareMode": "source-build"')]" 2
+write_catalog "[$(good_component c1 plugins/c1 '{"runtimeScope":"excluded","prepareMode":"source-build"}')]" 2
 write_gitmodules "plugins/c1"
 run_case "C5 excluded 但 prepareMode != none"     CAUGHT
-write_catalog "[$(good_component c1 plugins/c1 ',"runtimeScope": "required", "prepareMode": "none"')]" 2
+write_catalog "[$(good_component c1 plugins/c1 '{"runtimeScope":"required","prepareMode":"none"}')]" 2
 write_gitmodules "plugins/c1"
 run_case "C6 required 但 prepareMode = none"      CAUGHT
 ```
@@ -583,7 +594,7 @@ EOF
 echo
 echo "== D. --plan prepare =="
 # 两个组件：一个 required/source-build，一个 excluded（不应出现在计划里）
-write_catalog "[$(good_component aaa plugins/aaa),$(good_component bbb plugins/bbb ',"runtimeScope": "excluded", "prepareMode": "none", "releaseScope": []')]" 2
+write_catalog "[$(good_component aaa plugins/aaa),$(good_component bbb plugins/bbb '{"runtimeScope":"excluded","prepareMode":"none","releaseScope":[]}')]" 2
 write_gitmodules "plugins/aaa plugins/bbb"
 plan_out="$(cd "$TMP" && node scripts/check-components.mjs --plan prepare 2>&1)"
 printf '  %-44s %s\n' "D1 计划含 required 组件" "$(printf '%s' "$plan_out" | grep -q 'plugins/aaa.*source-build' && echo ok || { echo '!! 缺 aaa'; FAILED=$((FAILED+1)); })"
@@ -714,17 +725,17 @@ echo
 echo "== E. materialized 阶段不变量 =="
 # E1: tracked-prebuilt 但入口未被跟踪 → 必须失败
 make_subrepo plugins/e1 '{"name":"e1","main":"lib/index.js"}' ""
-write_catalog "[$(good_component e1 plugins/e1 ',"prepareMode": "tracked-prebuilt"')]" 2
+write_catalog "[$(good_component e1 plugins/e1 '{"prepareMode":"tracked-prebuilt"}')]" 2
 write_gitmodules "plugins/e1"
 run_case "E1 tracked-prebuilt 但入口未跟踪"        CAUGHT
 # E2: tracked-prebuilt 且入口已跟踪 → 通过
 make_subrepo plugins/e2 '{"name":"e2","main":"lib/index.js"}' "lib/index.js"
-write_catalog "[$(good_component e2 plugins/e2 ',"prepareMode": "tracked-prebuilt"')]" 2
+write_catalog "[$(good_component e2 plugins/e2 '{"prepareMode":"tracked-prebuilt"}')]" 2
 write_gitmodules "plugins/e2"
 run_case "E2 tracked-prebuilt 且入口已跟踪"        GAP
 # E3: tracked-prebuilt 且 main 已跟踪，但 exports 指向未跟踪文件 → 必须失败
 make_subrepo plugins/e3 '{"name":"e3","main":"lib/index.js","exports":{".":"./lib/index.js","./extra":"./lib/extra.js"}}' "lib/index.js"
-write_catalog "[$(good_component e3 plugins/e3 ',"prepareMode": "tracked-prebuilt"')]" 2
+write_catalog "[$(good_component e3 plugins/e3 '{"prepareMode":"tracked-prebuilt"}')]" 2
 write_gitmodules "plugins/e3"
 run_case "E3 exports 目标未跟踪（只查 main 不够）"  CAUGHT
 # E4: source-build 但无 build 脚本 → 必须失败
@@ -733,7 +744,7 @@ write_catalog "[$(good_component e4 plugins/e4)]" 2
 write_gitmodules "plugins/e4"
 run_case "E4 source-build 但无 build 脚本"          CAUGHT
 # E5: 未初始化子仓 + --require-materialized → 必须失败（skip 不再是免死金牌）
-write_catalog "[$(good_component e5 plugins/e5 ',"prepareMode": "tracked-prebuilt"')]" 2
+write_catalog "[$(good_component e5 plugins/e5 '{"prepareMode":"tracked-prebuilt"}')]" 2
 write_gitmodules "plugins/e5"
 out="$(cd "$TMP" && node scripts/check-components.mjs --require-materialized 2>&1)"; rc=$?
 printf '  %-44s %s\n' "E5 未初始化子仓 + --require-materialized" "$([ $rc -ne 0 ] && echo 'CAUGHT  ok' || { echo '!! 竟然通过'; FAILED=$((FAILED+1)); })"
@@ -896,16 +907,41 @@ EOF
 ```bash
 echo
 echo "== F. 消费者的 fail-open =="
-# 造一个 catalog 非法、但 --list 仍能"成功"的场景是修好后才不可能；
-# 这里直接断言两个消费者**不再**吞掉失败。
+# **行为断言，不是 grep 源码。**
+# grep 断言"某个字符串不存在"是"断言了等于没断言"：改写成 `2>/dev/null || :`
+# 照样通过，而 fail-open 还在。这里造一个**目录非法**的 fixture，让消费者实际跑一次，
+# 断言它**非零退出**——只看退出码，不看错误文案（文案重构不该让用例假红）。
+make_subrepo_broken() { # 造一个 catalog 非法、但子仓齐备的最小仓库
+  mkdir -p "$TMP/broken/scripts" "$TMP/broken/config" "$TMP/broken/plugins/bad"
+  cp "$ROOT/scripts/check-components.mjs" "$TMP/broken/scripts/"
+  # runtimeScope=excluded 但 releaseScope 含 bundle —— catalog 阶段不变量即失败
+  cat > "$TMP/broken/config/components.json" <<'JSON'
+{ "version": 2, "description": "broken fixture",
+  "components": [ { "name": "bad", "path": "plugins/bad", "sourceAuthority": "github",
+    "pinPolicy": "tag", "pinRef": "v1", "ciScope": ["build"],
+    "releaseScope": ["bundle"], "runtimeScope": "excluded", "prepareMode": "none",
+    "platforms": [], "testProfile": "none", "stateSchema": "none", "license": "MIT" } ] }
+JSON
+  printf '[submodule "plugins/bad"]\n\tpath = plugins/bad\n\turl = https://example.invalid/bad.git\n' > "$TMP/broken/.gitmodules"
+  printf '{"name":"bad","license":"MIT"}' > "$TMP/broken/plugins/bad/package.json"
+}
+make_subrepo_broken
+
+# 断言：查询器在目录非法时必须**非零退出**（而不是照常吐出结果）
+if (cd "$TMP/broken" && node scripts/check-components.mjs --list runtime:excluded >/dev/null 2>&1); then
+  printf '  %-44s %s\n' "F1 非法目录下 --list 必须失败" "!! 竟然成功（fail-open）"; FAILED=$((FAILED + 1))
+else
+  printf '  %-44s %s\n' "F1 非法目录下 --list 必须失败" "ok"
+fi
+
+# 断言：两个消费者在目录非法时必须非零退出
 for f in scripts/link-plugins.sh deploy/remote-install.sh; do
-  if grep -q 'check-components.mjs" --list runtime:excluded 2>/dev/null || true' "$ROOT/$f"; then
-    printf '  %-44s %s\n' "F1 $f 仍吞掉目录查询失败" "!! fail-open 未修"; FAILED=$((FAILED + 1))
+  if grep -q '2>/dev/null || true' "$ROOT/$f"; then
+    printf '  %-44s %s\n' "F2 $f 仍含吞错的 \`|| true\`" "!! fail-open 未修"; FAILED=$((FAILED + 1))
   else
-    printf '  %-44s %s\n' "F1 $f 已不再吞掉失败" "ok"
+    printf '  %-44s %s\n' "F2 $f 已不再吞错" "ok"
   fi
 done
-```
 
 - [ ] **Step 2: 跑，确认 F1 两条都失败**
 
