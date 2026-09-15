@@ -1690,7 +1690,8 @@ EOF
 node scripts/check-components.mjs --require-materialized
 node scripts/check-components.mjs --plan prepare
 ```
-Expected: 通过；计划 9 行，含 `plugins/dsh-agent-teams	source-build` 与 `plugins/dsh-at-file	tracked-prebuilt`。
+Expected: 通过；计划 **<N>** 行（**取实际值，别写死**——组件集合会变，目前 10），含
+`plugins/dsh-agent-teams	source-build` 与 `plugins/dsh-at-file	tracked-prebuilt`。
 
 - [ ] **Step 2: 在目标 Linux 主机上验证计划**
 
