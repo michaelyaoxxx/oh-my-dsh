@@ -38,7 +38,7 @@ T 编号对应 commit 边界，便于从台账直接跳回证据。
 | **T3** | Jenkins 信任边界（presubmit 凭据隔离、受信流水线、controller 0 executors） | ⬜ 规格可写 / **验证阻塞** | — | 第 3 个执行域（见 §T3） | R5, R6 |
 | **T4** | 不可变制品 | ⬜ 阻塞 | — | 同 T0b | R4 |
 | **T5** | 制品 / 发布状态机 | ⬜ 可做（纯规格） | — | — | R4, R5 |
-| **T6** | 状态迁移兼容矩阵 | ⬜ **需先调研** | — | 本机可查 | R4 |
+| **T6** | 状态迁移兼容矩阵 | 🔶 **调研完成，待决策**：不能作为纯文档产出 | 见 §T6 | 需在路径 A/B/C 中选 | R4 |
 | **T7** | headless 发布回归 | ⬜ **可实测** | — | 本机可跑 | R5 |
 | **T8** | Gerrit / GitHub 出口模型 | ⬜ 可做（纯设计） | — | — | R1 |
 | **T9** | GHA 供应链加固（SHA pin + checksum）+ 开源治理文件 | ✅ 完成 | `49180d9` | — | R2, R5 |
@@ -93,16 +93,51 @@ T 编号对应 commit 边界，便于从台账直接跳回证据。
 
 ## T6 · 状态迁移兼容矩阵 {#t6}
 
-**为什么它排在 T5/T7/T8 之前**：`config/components.json` 里有 `stateSchema` 字段（设计时想到了），
-但**没人查过插件实际往 `$DSH_HOME` 写什么、有没有版本字段**。两种结果导向完全不同的工作量：
+**状态：调研已完成（2026-09-15）。结论：不能作为纯文档产出。** 证据见下。
 
-| 调研结果 | 后果 |
+### 调研结果
+
+对 `$DSH_HOME`（本次实测：macOS 开发机 `.dsh/`）全部 19 个顶层条目逐项核对「谁写的」「有没有版本字段」：
+
+| 状态路径 | 写入方 | 版本字段 |
+| --- | --- | --- |
+| `dsh-session-archive/{state,archive-ledger}.json` | **dsh-web** `dsh-session-archive` | `version` |
+| `dsh-ssh.json` | **dsh-web** `dsh-ssh` | `version` |
+| `dsh-usage/{usage-ledger,provider-snapshots}.json` | **dsh-web** `dsh-usage` | `version` |
+| `.credentials.yaml` | **dsh-web** `dsh-doctor` | `version` |
+| `task-board/ledger-v2.json` | **dsh-web** `dsh-task-board` | `schemaVersion` + `revision` |
+| `task-board/scheduler-v2.json` | **dsh-web** `dsh-task-board` | **无**（版本只在文件名里） |
+| `llm-deepseek/files-v3.json` | **harness** `llm-deepseek` | `formatVersion`（版本也在文件名里） |
+| `pet.json` | **dsh-web** `dsh-pet` | **无** |
+| `remote-web-ui-devices.json`、`remote-web-ui-registry/web.json` | **dsh-web** `dsh-remote-web-ui` | **无** |
+| `settings.yaml` | **dsh-web** `dsh-doctor` | **无** |
+| `skin-center/`、`skin-center-active.json` | **dsh-web** `dsh-session-id` 等 | **无** |
+| `storages/{workspace,dsh_automation}.json` | 动态构造，字面未命中 | **无** |
+| `.agent-presets/` | **dsh-web** `dsh-liangshen` | — |
+| `sessions/` | harness | — |
+
+### 三条结论
+
+**① 有 **4 种**互不兼容的版本约定**：`version`（4 个包一致）、`formatVersion`（harness）、
+`schemaVersion`+`revision`（dsh-task-board）、**版本只写在文件名里**（`files-v3`、`ledger-v2`、
+`scheduler-v2`）。**8 个状态文件完全没有版本字段**。
+
+**② 归属几乎全在 dsh-web**——一个第三方 submodule（pin `main`）。按本仓硬约束**我们不能改**。
+harness 那一个同样归上游。**即：本仓对绝大多数状态 schema 没有修改权。**
+
+**③ 这与 T1 期间的 P1-1 同构**：看着是文档任务，一查发现是上游依赖。
+不做调研就写出来的兼容矩阵会是编的——所以这份台账到此为止，**没有**去写那份矩阵。
+
+### 可选路径（需决策，我不代选）
+
+| 路径 | 代价 |
 | --- | --- |
-| 插件**有** schema 版本字段 | 兼容矩阵是**文档工作**，写就行 |
-| 插件**没有**版本字段（很可能） | **不是写文档能解决的**——需改插件，而插件是第三方 pin，**本仓不能改**：只能报上游或在本仓做适配层 |
+| **A. 报上游**，请 dsh-web / harness 统一 schema 版本约定 | 慢、不可控；但这是唯一能真正解决问题的方向 |
+| **B. 本仓做适配层/迁移脚本** | 对 8 个**无版本字段**的文件只能靠内容启发式或文件名判断，**很脆弱**；且每次上游改动都可能打破 |
+| **C. 降级目标：不承诺 schema 迁移，承诺「状态不跨大版本兼容」** | 升级时要求清空/重建 `$DSH_HOME`。把问题从「迁移」降级为「重建」——**早期是合理且诚实的**，代价是用户丢本地会话/配置 |
 
-这与 T1 期间 P1-1 的情形同构：**看着是文档任务，一查发现是上游依赖**。
-**先查，再写**——不做调研就写出来的兼容矩阵是编的。
+**倾向 C 作为当前承诺**（诚实、零成本、可立即写清边界），**同时把 A 作为上游诉求**记入待报清单。
+B 只在某个具体状态被证明有真实迁移需求时才做。
 
 ---
 
@@ -132,14 +167,14 @@ T 编号对应 commit 边界，便于从台账直接跳回证据。
 ## 推荐顺序
 
 ```
-落盘本台账（已完成）
+落盘本台账                    ✅ 已完成（b761e09）
    ↓
-T6 调研 ──────────── 可能推翻后续设计，故最先
+T6 调研                       ✅ 已完成 —— 结论是不能作为纯文档产出，待选路径 A/B/C
    ↓
-T8 + T5 规格（并行）   纯设计，本机可完成
-T7 实测（并行）        本机可完成，产出真实数字
+T8 + T5 规格（并行）           纯设计，本机可完成
+T7 实测（并行）                本机可完成，产出真实数字
    ↓
-T3 规格 + 资源缺口说明  只写不吹
+T3 规格 + 资源缺口说明          只写不吹
    ↓
 （等基础设施）T3 验证 / T4+T0b 实现 / T5 制品链 / T7 双平台 lane
 ```
