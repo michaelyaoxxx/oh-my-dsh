@@ -313,7 +313,15 @@ const NAMED_SELECTORS = {
   prepare: 'runtime:required',
 }
 
-function list(catalog, selector) {
+// 「选择子 → 组件集合」的**唯一判定处**。`list()` 与 `plan()` 都必须走它。
+//
+// 为什么必须抽出来（而不是让各入口自己写过滤条件）：`NAMED_SELECTORS.prepare`
+// （'runtime:required'）与 plan() 里曾经硬编码的 `runtimeScope !== 'required'`
+// 是**同一条语义的两处副本**——只改一边，两个查询入口就**静默分歧**，而没有任何用例会红。
+// 那正是本项目一路在治的形态（同一事实写两处 = 两个漂移点，见本文件 FIELD_CLASS 那段）。
+// 抽成一处后，「改一处不会让两个入口分歧」是**结构上**成立的，不由注释保证。
+// 防退化装置是 probe-catalog.sh 的 D10——它断言两个入口选出的**组件集合相等**。
+function selectComponents(catalog, selector) {
   // ⚠️ 判据必须用 Object.hasOwn，**不能**写成 `NAMED_SELECTORS[selector] ?? selector`。
   // selector 来自 argv，是**用户可控**的；下标访问会在**原型链**上查找，于是
   // constructor / toString / __proto__ / valueOf / hasOwnProperty 命中的是
@@ -321,8 +329,6 @@ function list(catalog, selector) {
   // `TypeError: resolved.includes is not a function`（裸堆栈，rc=1）。
   // 它 fail-closed（不会静默返回空集），故**不是安全洞**，但诊断形态很差：用户看到的是
   // 内部堆栈，而不是"这个选择器不存在"。与上面 FIELD_CLASS 那处是同一手法。
-  // 防退化装置是 probe-catalog.sh 的 D9——注意那条用例断言的是报错**形态**（不能是裸
-  // TypeError），因为修复前 rc 同样是 1，"只断言 rc≠0"的用例抓不住它。
   const resolved = Object.hasOwn(NAMED_SELECTORS, selector) ? NAMED_SELECTORS[selector] : selector
   const [kind, value] = resolved.includes(':') ? resolved.split(':', 2) : [resolved, undefined]
   if (!['ci', 'runtime', 'release'].includes(kind)) {
@@ -335,12 +341,15 @@ function list(catalog, selector) {
     console.error(`✗ 选择器 ${selector} 缺少取值（如 runtime:required）。不支持"列出全部"——那会被误用成"全部都处理"。`)
     process.exit(1)
   }
-  const hit = catalog.components.filter((c) => {
+  return catalog.components.filter((c) => {
     if (kind === 'ci') return c.ciScope.includes(value)
     if (kind === 'runtime') return c.runtimeScope === value
     return c.releaseScope.includes(value)
   })
-  for (const c of hit) console.log(c.path)
+}
+
+function list(catalog, selector) {
+  for (const c of selectComponents(catalog, selector)) console.log(c.path)
 }
 
 // --plan <named-selector>：输出**动作计划**而不只是路径。
@@ -353,8 +362,7 @@ function list(catalog, selector) {
 // 输出契约与 list() 相同：成功时 stdout **只有**机器接口本身（每行 `<path>\t<prepareMode>`），
 // 失败走 stderr + 非 0。消费方按制表符切分，多一行摘要就会被当成组件路径读进去。
 //
-// ⚠️ 下面的过滤条件与 NAMED_SELECTORS.prepare 的取值（'runtime:required'）是**同一条**
-// 语义，写在两处。若将来 prepare 的定义变成别的字段，这里**不会**跟着变——两处必须一起改。
+// 选哪些组件**不在这里判断**：走 selectComponents()，与 `--list prepare` 同源。
 function plan(catalog, selector) {
   // 只认具名选择器：`--plan ci:test` 这类**在 --list 下合法但无动作定义**的选择器必须报错。
   // 静默输出空计划会被消费方读成「没有要准备的组件」——fail-open 的同一形态。
@@ -362,8 +370,7 @@ function plan(catalog, selector) {
     console.error(`✗ --plan 只支持具名选择器 prepare（收到 ${JSON.stringify(selector)}）`)
     process.exit(1)
   }
-  for (const c of catalog.components) {
-    if (c.runtimeScope !== 'required') continue
+  for (const c of selectComponents(catalog, selector)) {
     console.log(`${c.path}\t${c.prepareMode}`)
   }
 }
@@ -380,11 +387,15 @@ const catalog = loadCatalog()
 // 一旦 rc=0 而输出为空，PREPARE_LIST 就是空的 → 每个插件走「跳过」→
 // **部署"成功"却没装东西**。所以守卫必须在**分发之前**，且用 process.exit **立即**终止。
 //
-// ⚠️ 下面的 else 分支还会再跑一次 validateCatalog（在 validate() 里）。那是**无害的**：
-//    守卫失败时已经 exit 了，重复只可能发生在"已经通过"的 catalog 上（静默、返回 true）。
-//    但别把这里的 process.exit(1) 改成 process.exitCode = 1 —— 那会让每个失败打印**两遍** ✗，
-//    而 probe-catalog.sh 的 run_case 以「CAUGHT 用例恰好 1 条 ✗」作唯一归因判据。
-if (!validateCatalog(catalog)) process.exit(1)
+// ⚠️ 守卫**只作用于查询路径**。默认路径由 validate() 跑完整两阶段（catalog 阶段 +
+//    materialized 阶段），若在这里**无条件**先行退出，同一份 catalog 同时有 catalog 阶段
+//    错误与 license 不一致时只会报出**第一条**——用户得改一处、重跑、才看见下一处。
+//    rc 仍是 1（不是 fail-open），掉的是**诊断完整性**。
+//    两条路径的 ✗ 条数都是契约，各有夹具钉住：probe-catalog.sh 的 D11（默认路径 2 条）
+//    与 D12（查询路径 1 条——run_case 的唯一归因判据依赖它）。
+//    别把 process.exit(1) 改成 process.exitCode = 1：那会让查询路径也打印两遍 ✗。
+const wantsQuery = args.includes('--list') || args.includes('--plan')
+if (wantsQuery && !validateCatalog(catalog)) process.exit(1)
 
 const li = args.indexOf('--list')
 const pl = args.indexOf('--plan')

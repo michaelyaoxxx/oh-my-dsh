@@ -339,23 +339,64 @@ write_catalog "[$(good_component ok plugins/ok)]" 2
 write_gitmodules "plugins/ok"
 run_case "D8 --plan 非 prepare 选择器须拒"   CAUGHT --plan ci:test
 
-# D9：选择器名来自 **argv**（用户可控），而 `NAMED_SELECTORS[selector] ?? selector` 是
-# **原型查找**。实测（修复前）：--list constructor / toString / __proto__ / valueOf /
-# hasOwnProperty 全部 rc=1，但抛的是**未捕获的** `TypeError: resolved.includes is not a
-# function`（裸堆栈）。它 fail-closed（不会静默返回空集），故**不是安全洞**，但诊断形态很差。
-# ⚠️ 本用例**必须断言报错形态**：修复前 rc 同样是 1，只断言 rc≠0 的用例修复前后都"通过"
-# ——那不是防退化装置。与 T3 刚修的 `Object.hasOwn(FIELD_CLASS, f)` 是同一手法。
+# D9：选择器名来自 **argv**（用户可控）。`--list constructor` / `--list __proto__` 这类
+# **原型链名字**必须**非零退出**——要点是**不能静默放行**（rc=0 + 空集才是危险形态：
+# 消费方会把"拒绝工作"读成"没有要处理的组件"）。失败时 stdout 也必须为空（✗ 走 stderr）。
+# ⚠️ 本用例**刻意只断言行为（rc / stdout），不断言报错文案与形态**：本夹具的通则是
+# 「判据取 ✗ 的条数/退出码，不取文案」（F3 立的规矩）——断言「报错里必须出现某某字样」
+# 会让**纯改文案**（行为完全不变）假红，而那正是 F3 要避免的。
+# 代价要知道：修复前（`NAMED_SELECTORS[selector] ?? selector`，原型查找）这 5 个名字
+# 也是 rc=1 + stdout 空，所以本用例**不是**那次修复的防退化装置——它钉的是"不得静默
+# 放行"这条**行为**。那次修复的价值在**诊断质量**（干净报错 vs 未捕获的 TypeError 裸栈），
+# 按 F3 不为它写文案断言（评审裁定 M2；同 M4：诊断质量问题不为此加复杂度）。
 d9_bad=""
 for sel in constructor toString __proto__ valueOf hasOwnProperty; do
-  out="$(cd "$TMP" && node scripts/check-components.mjs --list "$sel" 2>&1)"; rc=$?
-  if [ "$rc" -eq 0 ]; then d9_bad="${sel}:rc=0（应非零）"
-  elif printf '%s' "$out" | grep -q 'TypeError'; then d9_bad="${sel}:裸 TypeError 堆栈"
-  elif ! printf '%s' "$out" | grep -q '未知选择器'; then d9_bad="${sel}:报错不是「未知选择器」"
+  out="$(cd "$TMP" && node scripts/check-components.mjs --list "$sel" 2>/dev/null)"; rc=$?
+  if [ "$rc" -eq 0 ]; then d9_bad="${sel}:rc=0（静默放行）"
+  elif [ -n "$out" ]; then d9_bad="${sel}:rc≠0 但 stdout 非空"
   fi
   [ -n "$d9_bad" ] && break
 done
 d9_rc=0; [ -z "$d9_bad" ] || d9_rc=1
-assert_case "D9 原型链选择器名（须干净拒绝）" "$d9_rc" "${d9_bad:-}"
+assert_case "D9 原型链选择器名（须非零退出）" "$d9_rc" "${d9_bad:-}"
+
+# D10：**等价性**——`--plan prepare` 与 `--list prepare` 必须选出**同一批组件**。
+# 分量：两个入口回答的是同一个问题（"要准备哪些组件"），同一份目录必须给同一个答案。
+# 这正是 09-15 review P0-1 的同一根病：同一份 manifest，两个消费者给出相反解释。
+# 修复前的形态是 plan() 自己硬编码 `runtimeScope !== 'required'`，与
+# NAMED_SELECTORS.prepare（'runtime:required'）是**同一条语义的两处副本**——只改一边，
+# 两个入口就静默分歧，而没有任何用例会红。现在两者都走 selectComponents()（唯一判定处），
+# 本用例就是钉住这件事的**装置**。
+# 判据取**集合相等**（plan 取第 1 字段后排序，与 list 排序后逐字节比），不取文案：
+# 两边本来就不该长得一样（plan 多一列 prepareMode），该一样的是**选出的组件集合**。
+write_catalog "[$(good_component aaa plugins/aaa),$(good_component bbb plugins/bbb '{"runtimeScope":"excluded","prepareMode":"none","releaseScope":[]}')]" 2
+write_gitmodules "plugins/aaa plugins/bbb"
+eq_plan="$(cd "$TMP" && node scripts/check-components.mjs --plan prepare 2>&1 | awk -F'\t' 'NF{print $1}' | sort)"
+eq_list="$(cd "$TMP" && node scripts/check-components.mjs --list prepare 2>&1 | sort)"
+d10_rc=0
+# 空集不能算"相等"：两个入口一起坏（如都返回空）时，等式仍然成立——那是**假过**。
+[ -n "$eq_plan" ] || d10_rc=1
+[ "$eq_plan" = "$eq_list" ] || d10_rc=1
+assert_case "D10 --plan 与 --list 选出同一批组件" "$d10_rc" "plan=[$(printf '%s' "$eq_plan" | tr '\n' ' ')]list=[$(printf '%s' "$eq_list" | tr '\n' ' ')]"
+
+# D11/D12：守卫**只**在查询路径上先行退出，默认路径仍跑完整 validate()。
+# 为什么钉：把守卫写成无条件的 `if (!validateCatalog(catalog)) process.exit(1)`，默认路径
+# 也被短路——同一份 catalog 同时有 catalog 阶段错误 + license 不一致时，**默认路径**从
+# 2 条 ✗ 掉到 1 条 ✗（rc 都是 1，不是 fail-open；掉的是**诊断完整性**：用户得改一处、
+# 重跑、才看见下一处）。而查询路径**必须**恰好 1 条 ✗——run_case 的唯一归因判据依赖它。
+# 两条路径的 ✗ 条数都是契约，故各一条用例（判据取**条数**，不取文案）。
+# fixture：一个 ENUM 取值非法（catalog 阶段）+ 一个 license 与其 package.json 不一致
+# （materialized 阶段，只有默认路径才会跑到）。
+write_catalog "[$(good_component ok plugins/ok '{"runtimeScope":"bogus"}')]" 2
+write_gitmodules "plugins/ok"
+mkdir -p "$TMP/plugins/ok"
+printf '{"name":"ok","license":"Apache-2.0"}\n' > "$TMP/plugins/ok/package.json"
+d11_n="$(cd "$TMP" && node scripts/check-components.mjs 2>&1 | grep -c '✗')"
+d11_rc=0; [ "$d11_n" -eq 2 ] || d11_rc=1
+assert_case "D11 默认路径 ✗=2（不因守卫而少报）" "$d11_rc" "✗×${d11_n}（期望 2）"
+d12_n="$(cd "$TMP" && node scripts/check-components.mjs --list prepare 2>&1 | grep -c '✗')"
+d12_rc=0; [ "$d12_n" -eq 1 ] || d12_rc=1
+assert_case "D12 查询路径 ✗=1（唯一归因不变）" "$d12_rc" "✗×${d12_n}（期望 1）"
 
 echo
 if [ "$STRICT" = 1 ] && [ "$FAILED" -ne 0 ]; then
