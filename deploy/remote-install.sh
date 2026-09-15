@@ -38,7 +38,11 @@ PROFILE=dsh
 # 不挂进本 profile 的包：dsh-tui 是**终端前端**（与 dsh-web-app 同级，cordis.patch.yml
 # 覆盖 30 个 base 行），它同样声明了 dsh.bundle.patch，不排除会被下面的候选收集捞进来
 # 挂到 profile dsh、把 web 环境弄坏。它跑在独立 profile，见 scripts/link-tui.sh。
-SKIP_MOUNT=(plugins/dsh-tui)
+# 与 scripts/link-plugins.sh 同源：由组件目录派生（runtimeScope=excluded）。
+SKIP_MOUNT=()
+while IFS= read -r _p; do
+  [ -n "$_p" ] && SKIP_MOUNT+=("$_p")
+done < <(node "$ROOT/scripts/check-components.mjs" --list runtime:excluded 2>/dev/null || true)
 cd "$ROOT"
 [ -f harness/package.json ] || { echo "错误: 未找到 harness/package.json（rsync 内容不完整？）。" >&2; exit 1; }
 

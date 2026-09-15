@@ -22,11 +22,15 @@ ROOT="$PWD"
 PROFILE=dsh
 export DSH_HOME="${DSH_HOME:-$ROOT/.dsh}"
 
-# 不挂进本 profile 的包。dsh-tui 是**终端前端**：它与 dsh-web-app 同级（cordis.patch.yml
-# 覆盖 30 个 base 行：system-prompt / llm-deepseek / agent-loop / 工具 / 策略…），两个前端
-# 会抢同一批行。它同样声明了 dsh.bundle.patch，不排除就会被下面的候选收集捞进来挂到
-# profile dsh、把 web 环境弄坏。它跑在独立 profile，见 scripts/link-tui.sh。
-SKIP_MOUNT=(plugins/dsh-tui)
+# 不挂进本 profile 的包 —— 由**组件目录**派生（runtimeScope=excluded），不再硬编码：
+# 谁进运行时由 config/components.json 说了算，避免「目录说不用、脚本却还在挂」的漂移。
+# 例：dsh-tui 是终端前端，与 dsh-web-app 同级（覆盖 30 个 base 行），两个前端会抢同一批
+# 行；它同样声明了 dsh.bundle.patch，不排除就会被候选收集捞进来挂到 profile dsh。
+# 注意：这里用 --list runtime:excluded 直接给路径，故无需再拼 plugins/ 前缀。
+SKIP_MOUNT=()
+while IFS= read -r _p; do
+  [ -n "$_p" ] && SKIP_MOUNT+=("$_p")
+done < <(node "$ROOT/scripts/check-components.mjs" --list runtime:excluded 2>/dev/null || true)
 
 # dsh plugin 在 profile 目录里 spawn `pnpm`，corepack 从该目录向上找
 # packageManager。本仓根没有 package.json，corepack 会回落 latest（pnpm 12.x 的

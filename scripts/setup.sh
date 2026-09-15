@@ -198,8 +198,24 @@ plugin_install() { # $1=目录 $2=安装子命令（pnpm 用 install，npm 用 c
 # /tmp 在 macOS 与 Linux 都存在且足够短；只作用于插件循环，不动 harness 构建。
 export TMPDIR=/tmp
 
+# 谁参与安装/构建由**组件目录**决定（config/components.json 的 ciScope）。
+# 例：dsh-tui 是 metadata-only（终端前端，与 dsh-web-app 抢同一批 base 行），
+# ciScope 不含 install → 此处跳过。它仍受 pin 校验覆盖（scripts/check-pins.sh
+# 读同一份目录），所以「不安装」不等于「脱离视野」。
+# 先做一次双向校验：目录与 .gitmodules 不一致时立即失败，避免静默漏装一个组件。
+node scripts/check-components.mjs || {
+  echo "错误: 组件目录校验失败（见上）。请先修正 config/components.json 与 .gitmodules 的一致性。" >&2
+  exit 1
+}
+INSTALL_LIST="$(node scripts/check-components.mjs --list ci:install)"
+
 for d in plugins/*/; do
   [ -f "$d/package.json" ] || continue
+  rel="${d%/}"
+  if ! printf '%s\n' "$INSTALL_LIST" | grep -qx "$rel"; then
+    echo "==> 跳过安装/构建: ${rel}（组件目录 ciScope 不含 install）"
+    continue
+  fi
   echo "==> 安装插件依赖: $d"
   if [ -f "$d/pnpm-lock.yaml" ]; then
     plugin_install "$d" install --frozen-lockfile
