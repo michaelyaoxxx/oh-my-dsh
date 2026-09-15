@@ -138,3 +138,20 @@ CI 的 step 0 调同一条命令的 `--offline`。**改完先跑它**；下表�
   而提交信息里留下**空洞**。本仓实际踩过两次——`` `ln -sfn` ``（报 usage）与
   `` `bash scripts/check-components.mjs` ``（报一堆 //: is a directory），都被误判成
   工具链问题查了很久。**用 `git commit -F <文件>` 或 `<<'EOF'` heredoc。**
+- ⚠️ **`git commit` 提交的是整个索引，不是你刚 `git add` 的那个文件。** 本仓用 submodule，
+  而 **`git submodule add` 会自动把 `.gitmodules` 与 gitlink 放进暂存区**（之后很可能一直
+  留在那里，因为登记组件时还要改 `config/components.json`，那份是未暂存的）。
+  于是**任何一次裸 `git commit` 都会把别人没提交完的 submodule 改动卷进来**——
+  本仓实际踩过一次：一个只改文档的提交里混进了 `.gitmodules` 与 gitlink，
+  而 catalog 的对应登记**没**进来，那个提交的**双向校验必然失败**（fresh clone 上 CI 第一步就红）。
+
+  两条防线，**提交前都做**：
+
+  ```bash
+  git diff --cached --name-only            # 只应出现你自己的文件
+  git commit --only <file1> <file2> -F -   # 只提交列出的路径，不动别人的暂存状态
+  ```
+
+  `--only` 是关键：它按**工作区内容**提交指定路径、**忽略索引里别人的东西**，
+  且提交后别人的暂存状态原封不动。❌ **不要用 `git reset` 去"清理"索引**——
+  那会动到别人的工作区，而本仓明确要求无关改动原样保留。
