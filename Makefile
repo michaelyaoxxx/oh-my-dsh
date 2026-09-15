@@ -17,10 +17,15 @@ LOG_STAMP := $(shell printf '%s-%s' "$$(date -u +%Y%m%dT%H%M%SZ)" "$$$$")
 #    于是 `v1.0;x` 这种串照样通过——守卫形同虚设。改用 -x 后可彻底避开 `$`。
 VERSION_RE := v?[0-9A-Za-z][0-9A-Za-z._-]*
 
-.PHONY: setup dev dev-tui deploy release link-plugins help
+.PHONY: setup dev dev-tui deploy release link-plugins check help
 
 help: ## 显示可用目标
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
+
+check: ## 本地自检：组件/许可证/声明/pin/shellcheck（改完代码跑这个；CI 跑同一份清单）
+	# 不落盘日志：它是只读报告，输出本身就是结果，tee 只会增加噪声。
+	# 清单在 scripts/check-all.sh（单一事实源）——CI 的 step 0 调同一条命令的 --offline。
+	bash scripts/check-all.sh
 
 setup: ## 一键搭建本地环境（submodule + 依赖 + harness 构建）
 	mkdir -p $(LOG_DIR)

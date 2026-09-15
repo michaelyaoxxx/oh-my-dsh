@@ -81,7 +81,11 @@ CI/CD 的载体是 **Gerrit（评审 + 门禁）+ Jenkins（构建 / 部署）+ 
 
 ## 改动区域 → 必须跑什么
 
-| 改动区域 | 必须做 |
+**基线是 `make check`**——它一次跑完组件目录 / 许可证 / 第三方声明 / pin / shellcheck，
+清单的单一事实源是 [`scripts/check-all.sh`](scripts/check-all.sh)（`--list` 可列出），
+CI 的 step 0 调同一条命令的 `--offline`。**改完先跑它**；下表只列**额外的**要求。
+
+| 改动区域 | 必须做（额外的） |
 | --- | --- |
 | `scripts/*.sh`、`deploy/*` | `shellcheck -S style scripts/*.sh deploy/remote-install.sh` 全绿（CI 固定 0.11.0） |
 | `config/components.json` / `.gitmodules` | `node scripts/check-components.mjs`（声明层）+ `node scripts/check-licenses.mjs`（**内容层**：读各组件 LICENSE 文件判 copyleft）+ `bash scripts/check-pins.sh`；**改了组件集合或 `license` 还要** `node scripts/gen-notices.mjs`（声明文件是**合规文档**，`--check` 会拒绝过期内容）。覆盖边界有实测证据：`bash scripts/probe-license-gate.sh` |

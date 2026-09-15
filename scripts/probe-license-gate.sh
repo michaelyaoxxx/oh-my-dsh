@@ -12,21 +12,26 @@
 # 目录里造——往本仓塞 GPL 样本会把测试手段变成事故。
 # 全程在 mktemp 出来的目录内操作，退出即清理，**不碰本仓任何文件**。
 #
-# ── 什么时候跑它 ─────────────────────────────────────────────────────────────
-# **不是门禁，不要放进 CI。** 它恒 exit 0，回答的是「门禁**覆盖**什么」，
-# 而不是「这次改动合规吗」——放 CI 只会白跑一个 job。
+# ── 两种用法，别混淆 ─────────────────────────────────────────────────────────
+# 它是**证据生成器**（回答「门禁覆盖什么」），同时可当**门禁的回归测试**用。
 #
-# 该跑它的时机：
-#   1. **改动许可证门禁逻辑时**（改 check-components.mjs 的 license 词表/一致性
-#      判定，或改 check-licenses.mjs 的特征串/判定策略）。它是那两道门的**回归
-#      基线**：确认「该拦的还拦得住、不该拦的仍放行」。把新的覆盖矩阵贴进 commit。
-#   2. **新引入组件时**——确认新组件没落在某个未覆盖的形态上（如 B2/B3）。
+#   默认      打印覆盖矩阵，**恒 exit 0**。用于人读——改门禁逻辑或新引入组件时
+#             跑一次，把矩阵贴进 commit / PR。
+#   --strict  有用例与预期不符就 **exit 1**。供 `make check` 与 CI 把它当
+#             **门禁回归测试**：门禁被改弱时（该拦的拦不住），某个用例会由
+#             CAUGHT 翻成 GAP，从而失败。
 #
-# 跑它的时机**不是**「每次提交」：日常门禁由 check-components.mjs +
-# check-licenses.mjs 承担（已挂 verify.yaml），本脚本只在门禁**本身**变动时用。
+# 为什么 --strict 值得进 CI：它防的是**门禁被静默改弱**——本项目明确要防
+# 「引入 copyleft」，而最省事的绕过就是改门禁本身。期望值在合理政策变动下
+# 是稳定的（都是「copyleft 被拒」，例如将来允许 LGPL 也不会翻转任何用例），
+# 所以摩擦很小。
+# ⚠️ 但它**防不住蓄意攻击者**：攻击者能改被评审树里的门禁，也能改本脚本。
+#    真正的解法是门禁脚本从**受信 ref** 取——见 AGENTS.md 的 Review 清单。
 #
-# 用法：bash scripts/probe-license-gate.sh
-# 退出码：恒 0（它是**证据生成器**，不是门禁；结果看输出）
+# 用法：
+#   bash scripts/probe-license-gate.sh            # 证据：看覆盖矩阵
+#   bash scripts/probe-license-gate.sh --strict   # 回归测试：不符即 exit 1
+# 退出码：默认恒 0；--strict 下不符则 1
 
 # 刻意**不用** set -e：本脚本要逐用例收集失败并继续，而非首个失败就退出。
 # 代价是 cd 这类前置失败不会被自动中止，故显式 || exit（shellcheck SC2164）。
@@ -73,12 +78,20 @@ EOF
 }
 
 # 场景用的附加构造：**必须在 stage 之后、检查之前**跑，否则会被下一个用例的 stage 清掉。
+#
+# 下面三个由 run_case 经 `$6` 变量**间接调用**，shellcheck 看不见这种调用，
+# 会报 SC2329「函数从未被调用」——是假阳性，不是死代码。
+# （实测：本文件末尾**有没有** `exit 0` 会翻转这条报告的触发，属 linter 分析边界，
+#   不是代码问题。保留显式 exit 0，用窄范围豁免而不是靠"别写 exit"绕开。）
+# shellcheck disable=SC2329
 x_gpl_license() { printf '%s\n' "$GPL_TEXT" > "$TMP/plugins/evil/LICENSE"; }
+# shellcheck disable=SC2329
 x_embedded_gpl() {
   mkdir -p "$TMP/plugins/evil/src"
   printf '/* This program is free software: you can redistribute it and/or modify it\n   under the terms of the GNU General Public License as published by the FSF. */\nexport const x = 1\n' \
     > "$TMP/plugins/evil/src/index.js"
 }
+# shellcheck disable=SC2329
 x_gpl_dep() {
   mkdir -p "$TMP/plugins/evil/node_modules/gpltrap"
   printf '{"name":"gpltrap","license":"GPL-3.0"}' > "$TMP/plugins/evil/node_modules/gpltrap/package.json"
@@ -141,3 +154,15 @@ if [ "$FAILED" -eq 0 ]; then
 else
   echo "$FAILED 项与预期不符（见上）。"
 fi
+
+# --strict：把「与预期不符」变成失败。默认不——它是证据生成器，不是门禁。
+# 归因提示：不符最多的情况是**门禁被改弱**（CAUGHT 翻成 GAP），那正是它要抓的；
+# 其次是**期望值本身需要更新**（政策变了），此时应同步改上面的用例表。
+if [ "${1:-}" = "--strict" ] && [ "$FAILED" -ne 0 ]; then
+  echo
+  echo "✗ --strict：$FAILED 项与预期不符。"
+  echo "  若是**门禁被改弱**（该拦的拦不住了）→ 这是真回归，修门禁。"
+  echo "  若是**政策变更**导致期望值过期 → 同步更新本脚本的用例表，并在 commit 里说明。"
+  exit 1
+fi
+exit 0

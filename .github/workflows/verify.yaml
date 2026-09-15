@@ -23,16 +23,13 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      # 0. 组件与许可证：全部不联网、不依赖构建，是整条流水线最便宜的门，应当最先失败。
-      #    check-components.mjs  声明层：双向集合校验 + license 词表 + 与组件自身声明核对
-      #    check-licenses.mjs    内容层：读各组件 LICENSE 文件判是不是 copyleft
-      #                          （补上声明层挡不住的「都写 MIT 但 LICENSE 是 GPL」）
-      #    gen-notices.mjs       声明文件是否过期（它是合规文档）
-      - name: Check component catalog and licenses
-        run: |
-          node scripts/check-components.mjs
-          node scripts/check-licenses.mjs
-          node scripts/gen-notices.mjs --check
+      # 0. 离线检查组。**清单不在这里**——它的事实源是 scripts/check-all.sh，
+      #    `make check` 也调同一个脚本。此前这里的命令清单与 CONTRIBUTING 的自检
+      #    片段是两份手工副本，已经漂过一次（check-licenses.mjs 进了 CI 却漏在本地）。
+      #    这一组不联网、不依赖构建，是整条流水线最便宜的门，应当最先失败；
+      #    pin 校验要联网、shellcheck 要下工具链，故各自留在后面的独立 step。
+      - name: Offline checks (components / licenses / notices / gate regression)
+        run: bash scripts/check-all.sh --offline
       # 1. pin 一致性（清单与校验逻辑收敛在 scripts/check-pins.sh，
       #    与 scripts/release.sh、Jenkins 侧共用同一实现；未推送 commit 会失败）
       - name: Check submodule pins

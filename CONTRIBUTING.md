@@ -30,16 +30,18 @@ CI/CD 设计的权威入口是 [docs/cicd/README.md](docs/cicd/README.md)。
 ## 提交前自检
 
 ```sh
-make setup                            # 或至少确认 harness 已构建
-node scripts/check-components.mjs     # 声明层：组件目录 ↔ .gitmodules 双向一致 + license 词表 + 与 package.json 核对
-node scripts/check-licenses.mjs       # 内容层：读各组件 LICENSE 文件判是不是 copyleft
-bash scripts/check-pins.sh            # pin 校验（--drift 看落后情况，不阻断）
-node scripts/gen-notices.mjs --check  # 第三方声明是否与组件目录一致（改组件/license 后需重新生成）
-shellcheck -S style scripts/*.sh deploy/remote-install.sh
+make check     # 一次跑完：组件目录 / 许可证 / 第三方声明 / pin / shellcheck
 ```
 
-> 上面第一条曾是 `bash scripts/check-components.mjs`——**用 bash 跑 .mjs 会以退出码 2 失败**
-> （bash 把 JS 当 shell 解释）。已修正为 `node`。
+**清单不在这份文档里**，它的单一事实源是 [`scripts/check-all.sh`](scripts/check-all.sh)
+（`bash scripts/check-all.sh --list` 可列出将跑哪些）。CI 的 step 0 调同一条命令的
+`--offline` 模式——**本地与 CI 跑的是同一份清单**，这是刻意的：此前两者各写一份手工
+副本，已经漂过一次（`check-licenses.mjs` 上了 CI 却漏在本地清单里）。
+
+`make setup` 不是自检的前置——`--offline` 那组在 `make setup` 之前也能跑。
+
+> 历史教训：这条自检曾写作 `bash scripts/check-components.mjs`，
+> **用 bash 跑 .mjs 会以退出码 2 失败**（bash 把 JS 当 shell 解释）。凡 `.mjs` 一律 `node`。
 
 改了 submodule 的 pin 时，**必须同步更新 [config/components.json](config/components.json)**——
 否则 CI 会在第一步就失败（双向校验会指出哪个组件对不上）。
