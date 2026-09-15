@@ -163,8 +163,15 @@ function validate(catalog) {
     for (const f of REQUIRED_FIELDS) {
       if (!(f in c)) fail(`${where} 缺字段 ${f}`)
     }
+    // ⚠️ 判据必须用 Object.hasOwn，**不能用 `f in FIELD_CLASS`**。
+    // 理由是实测的、不是洁癖：`in` 会**沿原型链**查找，于是 Object.prototype 的成员名
+    // （constructor / toString / hasOwnProperty / valueOf / __proto__）会被判成"已登记分类"
+    // 而**静默放行**——正好绕过本规则要拦的那件事，规则就没兑现它承诺的事。
+    // 这不是理论风险：`constructor` / `toString` 是人会真取的字段名；且实测它们能一路
+    // 穿过 `{...base, ...over}` + JSON 往返，作为**组件自己的键**进到这里。
+    // 防退化装置是 probe-catalog.sh 的 B3/B4——改回 `in` 它们会立刻变红。
     for (const f of Object.keys(c)) {
-      if (!(f in FIELD_CLASS)) {
+      if (!Object.hasOwn(FIELD_CLASS, f)) {
         fail(
           `${where} 出现未登记分类的字段 ${JSON.stringify(f)}。` +
             `新增字段必须在 FIELD_CLASS 里声明它是 operational 还是 declared（见 config/README.md）。`,

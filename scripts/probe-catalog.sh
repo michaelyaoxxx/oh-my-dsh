@@ -158,6 +158,18 @@ write_catalog "[$(good_component ok plugins/ok '{"untrackedField":1}')]" 2
 write_gitmodules "plugins/ok"
 run_case "B2 出现未登记分类的字段"          CAUGHT
 
+# B3/B4：**原型链名字**。判据若写成 `f in FIELD_CLASS`，`in` 会沿原型链命中
+# Object.prototype 的成员（constructor / toString / hasOwnProperty / valueOf / __proto__），
+# 把这 5 个名字误判成"已登记分类"而**放行**——即本任务这条新规则自己有 5 个口子可绕。
+# 这里把「必须用 hasOwn 而非 in」这个性质**钉住**：将来有人改回 `in`，本用例必须变红。
+# ⚠️ 别删：它是这条规则唯一的防退化装置（实测过：改成 `in` 时 B3/B4 双双假过）。
+write_catalog "[$(good_component ok plugins/ok '{"constructor":1}')]" 2
+write_gitmodules "plugins/ok"
+run_case "B3 原型链名 constructor（须拒）"   CAUGHT
+write_catalog "[$(good_component ok plugins/ok '{"__proto__":1}')]" 2
+write_gitmodules "plugins/ok"
+run_case "B4 原型链名 __proto__（须拒）"     CAUGHT
+
 echo
 if [ "$STRICT" = 1 ] && [ "$FAILED" -ne 0 ]; then
   echo "✗ --strict：${FAILED} 项与预期不符。"
