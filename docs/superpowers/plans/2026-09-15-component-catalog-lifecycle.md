@@ -1244,11 +1244,15 @@ Expected: `0`
 - [ ] **Step 5: 验证 setup 的计划与执行一致**
 
 Run: `bash -c 'bash scripts/setup.sh 2>&1 | grep -E "跳过准备|安装依赖|构建:|跳过构建" | head -30'`
-Expected: 9 个组件各出现一次；`plugins/dsh-tui` **不出现**；`dsh-agent-teams` 有 `构建:` 行（存量修正后它是 source-build）；`dsh-at-file` 是 `跳过构建:`。
+Expected: **`<N>` 个组件各出现一次**（`<N>` = `node scripts/check-components.mjs --plan prepare | wc -l`，目前 10；
+**别把数字写进断言**——组件集合会变）；`plugins/dsh-tui` **不出现**；
+`dsh-agent-teams` 有 `构建:` 行（存量修正后它是 source-build）；`dsh-at-file` 是 `跳过构建:`。
 
 > ⚠️ 若不想真跑完整 setup（会重装依赖），改为只验证计划：
-> `node scripts/check-components.mjs --plan prepare` 应输出 9 行，其中
+> `node scripts/check-components.mjs --plan prepare` 应输出 `<N>` 行（目前 10），其中
 > `plugins/dsh-agent-teams<TAB>source-build`、`plugins/dsh-at-file<TAB>tracked-prebuilt`。
+> **但要知道代价**：这条替代**只验了计划数据、没验执行路径**——而本任务改的正是执行路径。
+> 若走替代，**必须在报告里写明 setup 的端到端执行未验证**。
 
 - [ ] **Step 6: shellcheck**
 
