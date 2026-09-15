@@ -20,9 +20,9 @@
    gitignore 的一次性运行时目录）。它**跨 `make dev` 重启保留**——`link-plugins.sh` /
    `dsh plugin add` 只写 profile 的 `package.json` / `cordis.patch.yml` / `node_modules` 链接，
    不碰 settings.yaml。多数 deepseek 官方与第三方插件走这一阵营，共用同一个 settings.yaml。
-2. **有独立配置仓的插件**（如 `modsearch`）：不用 settings.yaml，配置在它自己的文件里
-   （modsearch → **`~/.modsearch/config.json`**，`plugins/modsearch/dsh/index.js` 注释
-   「the one file every harness shares」；DSH 设置卡片与 CLI 读写同一文件，合并式打补丁 +
+2. **有独立配置仓的插件**（如 `modsearch`、`modlens`）：不用 settings.yaml，配置在它自己的
+   文件里（modsearch → **`~/.modsearch/config.json`**、modlens → **`~/.modlens/config.json`**，
+   源码注释都是「共享给 CLI 与所有 harness」；DSH 设置卡片与 CLI 读写同一文件，合并式打补丁 +
    0600 原子写，不碰无关键）。
 
 **统一入口**：一切插件参数基线登记在 [`config/plugin-configs/catalog.json`](../config/plugin-configs/catalog.json)
@@ -40,9 +40,19 @@
 DSH settings 本身是「一个文档多个命名空间」的合并模型，所以走 `ctx.settings` 的插件
 （deepseek 官方 + 第三方）合并进 `config/plugin-configs/dsh-settings.yaml` 这一个文件（总览
 天然成立、seed/save 同一结构）；有独立配置仓的插件各一个基线文件（如
-`config/plugin-configs/modsearch.json`），因为它们的 live 格式（json）、live 路径（`$HOME`）、
-secret 语义（0600、环境变量注入）都不同，强行合并会失真。新增插件 = 在
-`config/plugin-configs/` 放一个基线文件 + `catalog.json` 加一行，脚本不用改。
+`config/plugin-configs/modsearch.json`、`config/plugin-configs/modlens.json`），因为它们的
+live 格式（json）、live 路径（`$HOME`）、secret 语义（0600、环境变量注入）都不同，强行
+合并会失真。新增插件 = 在 `config/plugin-configs/` 放一个基线文件 + `catalog.json` 加一行，
+脚本不用改。
+
+**为什么独立仓的 live 文件留在 `$HOME`、不挪进 `$DSH_HOME`**：`modsearch`/`modlens` 都是
+「先有独立 CLI、后有 DSH 插件」，配置路径硬编码成 `os.homedir()/…`（`~`），语义是**用户全局、
+所有 harness 共享**——用户换项目/清掉某个项目的 `.dsh`，搜索引擎与视觉服务的凭据配置不随之
+消失。挪进 `$DSH_HOME` 会两头不讨好：① 那是第三方 submodule 的硬编码路径，改它必须 fork +
+离线维护，且上游一更新就错位；② `$DSH_HOME` 正是「gitignore 的一次性目录」，搬进去反而把
+本来跨项目存活的状态变成清 `.dsh` 就丢。**正确的「统一」在版本化层，不在 live 层**：live
+位置由插件定义（尊重上游），统一的是仓库这侧的 catalog 基线 + 一个 `save-settings.mjs`
+（上表）。密钥则一律走环境变量，不落任何文件/版本库。
 
 **两条真正会丢的路径**（上面方案治的是 ①；② 是上游设计）：
 1. **`.dsh/` 与 `~/.modsearch/` 都是 gitignore/一次性**：fresh clone / 清空 / 换机器 / 部署

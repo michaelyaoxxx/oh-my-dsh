@@ -20,6 +20,16 @@
       "managedHeader": false,
       "secretPolicy": "none",
       "chmod": "600"
+    },
+    {
+      "id": "modlens",
+      "desc": "modlens 独立配置仓（live=$HOME/.modlens/config.json，所有 harness 共享；source：plugins/modlens/dsh/index.js 注释 issue #39）。DSH 设置卡片走路由读写同一文件；密钥走 OPENAI_API_KEY / ANTHROPIC_API_KEY 等环境变量（CLI flags > env > 文件 > built-ins），基线上不携带字面密钥。",
+      "format": "json",
+      "live": "$HOME/.modlens/config.json",
+      "baseline": "modlens.json",
+      "managedHeader": false,
+      "secretPolicy": "none",
+      "chmod": "600"
     }
   ]
 }
