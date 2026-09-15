@@ -274,7 +274,7 @@ deploy_one() { # $1=target（user@host）
         if [ -e \"\$p\" ]; then
           real=\$(readlink -f \"\$p\" 2>/dev/null || echo \"\$p\")
           if [ \"\$real\" != \"\$p\" ]; then echo \"拒绝: \$p 实际解析为 \$real\"; exit 1; fi
-          case \"\$real\" in /opt/?*|/srv/?*) ;; *) echo \"拒绝: \$p 解析后不在 /opt 或 /srv 下（\$real）\"; exit 1 ;; esac
+          case \"\$real\" in /opt/?*|/srv/?*) ;; *) echo \"拒绝: \$p 解析后不在 /opt 或 /srv 下（\${real}）\"; exit 1 ;; esac
         fi
       done
     "; then

@@ -89,3 +89,8 @@ git commit -m "chore: bump dsh-web pin" && git push
   - `make setup` 会执行 `git submodule update --init --recursive`，把工作树检出到 pin 提交（detached）——**修复在分支上活着，但工作树里失效**，需按上面第二条命令恢复。
   - 主仓会一直显示 ` M plugins/<name>`，`release.sh` 的干净度检查（`git diff --quiet`，见 `scripts/release.sh:8`）会拒绝发布，直到 fork + push + 更新 pin。
   - 这是 submodule「pin 是显式快照」语义的正常体现：**pin ≠ 工作树 HEAD 时，所有干净度检查都会亮**。
+- **脚本报 `line N: VAR<?>: unbound variable`（变量名里带乱码）**：脚本里出现了**变量名紧跟非 ASCII 字符**的写法，如 `echo "…（$NODE_BIN_DIR）…"`。在 UTF-8 locale + bash 3.2（macOS 自带）下，多字节字符的**首字节被当作变量名的一部分**，于是展开 `NODE_BIN_DIR）` 这个不存在的变量，`set -u` 直接中止。实测：`LANG=C` **不触发**、`zh_HK.UTF-8` / `en_US.UTF-8` **触发**——所以它会被 locale 掩盖很久。**处置**：一律写 `${VAR}`（花括号显式界定名字）。本仓实际踩过四处（`setup.sh` 的 corepack 提示、`t0b-alpha-probe.sh` 的失败分支、`deploy-remote.sh` 的符号链接拒绝消息、`probe-license-gate.sh`），均已修。**自查**：
+  ```sh
+  grep -rnP '\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7F]' scripts/*.sh deploy/*.sh
+  ```
+  注释里的命中无害（不展开），但**注释外的每一处都是潜伏的 `set -u` 中止**。

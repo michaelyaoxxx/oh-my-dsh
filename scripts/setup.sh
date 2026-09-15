@@ -76,7 +76,7 @@ if ! verify_all_pnpm; then
   NODE_BIN_DIR="$(dirname "$(command -v node)")"
   if [ -n "$PNPM_BIN" ] && [ "$(dirname "$PNPM_BIN")" = "$NODE_BIN_DIR" ] \
      && ! head -c 400 "$PNPM_BIN" | grep -qi 'corepack'; then
-    echo "注意: 当前 node 目录（$NODE_BIN_DIR）下有非 corepack 的 pnpm（$(pnpm --version 2>/dev/null || echo 未知)），corepack enable 会将其替换为 corepack shim（shim 会按各仓库 packageManager 解析版本）。"
+    echo "注意: 当前 node 目录（${NODE_BIN_DIR}）下有非 corepack 的 pnpm（$(pnpm --version 2>/dev/null || echo 未知)），corepack enable 会将其替换为 corepack shim（shim 会按各仓库 packageManager 解析版本）。"
   fi
   if ! corepack enable; then
     echo "错误: corepack enable 失败。请手动执行 corepack enable（必要时加 sudo，或 corepack enable --install-directory <某目录> 并把该目录加入 PATH），然后重开终端重试。" >&2

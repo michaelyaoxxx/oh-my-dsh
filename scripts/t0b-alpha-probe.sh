@@ -114,7 +114,7 @@ SNAP="$(find "releases/$D2" -type f -printf '%p %s\n' | sort | md5sum)"
 chmod -R a-w "releases/$D2"
 out="$(STATE_DIR="$SCRATCH/state" "releases/$D2/bin/app" 2>&1)"; rc=$?
 chmod -R u+w "releases/$D2"
-if [ "$rc" -eq 0 ]; then pass "只读 release 下应用退出码 0（$out）"; else fail "只读 release 下应用失败 rc=$rc：$out"; fi
+if [ "$rc" -eq 0 ]; then pass "只读 release 下应用退出码 0（${out}）"; else fail "只读 release 下应用失败 rc=${rc}：${out}"; fi
 if [ -f "$SCRATCH/state/last-run-version" ]; then
   pass "状态落在 STATE_DIR（值=$(cat "$SCRATCH/state/last-run-version")）"
 else
