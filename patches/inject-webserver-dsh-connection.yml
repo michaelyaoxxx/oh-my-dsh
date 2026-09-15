@@ -9,8 +9,14 @@
 # （`dsh --dump-config` 可查），webServer 由兄弟 entry 提供、不在其 fiber 链上，于是任何
 # host 侧插件调用 ctx.connection.rpc.handle 都报：
 #   cannot get property "webServer" without inject
-# dsh-plugin-mineru 的 registerRpc 是第一个这样的调用方；给 mineru 自己加 inject 无用
-# （实测其 fiber.inject/fiber.store 已含 webServer 仍报错，walk 不走它）。
+# 已知调用方（**本 patch 不专为其中任何一个而设，是结构性修复**）：
+#   - dsh-plugin-mineru 的 registerRpc（lib/index.js:743）——最早被发现的那个；
+#   - dsh-automation 的 ctx.connection.rpc.handle（src/rpc.ts:196 / lib/index.js:169）。
+# ⚠️ mineru 已于 2026-09-15 移出默认 profile（AGPL 边界，见 THIRD-PARTY-NOTICES.md），
+#    但**本 patch 必须保留**：dsh-automation 仍在默认 profile 里，走的是同一条路径。
+#    谁若因「mineru 已经不在 profile 里」而想删掉本 patch，会直接弄坏 dsh-automation。
+# 给调用方自己加 inject 无用（实测 mineru 的 fiber.inject/fiber.store 已含 webServer 仍报错，
+# walk 不走它）。
 #
 # 处置：在 entry 级 inject 补 webServer——loader 会并入 fiber.inject（harness/vendor/loader/
 # src/index.ts:122），且发生在 fiber 解析依赖之前。webRuntime 必须保留：patch 的 inject 是

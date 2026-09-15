@@ -33,6 +33,8 @@
 | B6 | **dsh-TUI 的 macOS 路径长度缺陷应报上游** | 其 `scripts/verify-inject-channel.mjs` 用 `os.tmpdir()`，macOS 下 unix socket 路径达 105 字节 > `sun_path` 上限 104 → `listen EINVAL`。本仓已用 `TMPDIR=/tmp` 绕行 | 报给 ccch1mneyyy/dsh-TUI（建议短路径或建 socket 前检查长度） |
 | B7 | **本仓 CI 不跑任何 submodule 测试** | 实测：harness 962 个测试文件、10 个插件合计 700+，而 CI 里一个都没跑（只有 pin / shellcheck / 构建 / 冒烟） | 按 [CI/CD 测试策略](cicd/04-test-strategy.md) 与[迁移阶段](cicd/01-architecture.md#12-迁移与验收阶段)落地版本化测试 catalog、根仓测试入口和发布回归 |
 | B8 | **dsh-plugin-mineru 截断函数在长 TMPDIR 下「越截越长」** | 实测：`lib/index.js:219` 的 `maybeTruncateMd` 把绝对路径嵌进提示语，macOS 长 tmpdir 下 202 > 原文 200 → 其自测 1 failed；`TMPDIR=/tmp` 则 29 passed | 报上游（建议加兜底：提示语长于截断量时不做截断）；同时是「必须双平台测试」的实证 |
+| B10 | **`link-plugins.sh` 只挂不摘** | 组件从 `runtimeScope: required` 改成 `excluded` 后，profile 里上一轮的 link **仍留着**，于是组件目录说「不进运行时」而实际照样加载。已加**告警**（2026-09-15，实测对 mineru 命中、对未挂载的 dsh-tui 不误报），但**不自动摘除** | 查明 `dsh plugin` 是否有 remove 子命令（未验证前不动用户的 profile），有则在脚本里对 excluded 组件做幂等摘除；否则文档化「删 profile 目录重跑」为正式处置路径 |
+| B9 | **可选自装组件（mineru）的安装路径未文档化** | 2026-09-15 起 mineru 因 AGPL 边界移出默认 profile 与制品（`runtimeScope: excluded`），本地 `make dev` 与远程部署**都不再挂它**；但「想用的人怎么装」还没写成文档 | 在 [plugin-dev.md](plugin-dev.md) 补一节：给出**实测过**的安装命令（`dsh plugin --profile dsh add …`；dsh-market 的 registry 快照里出现过 `github:HuanLinOTO/dsh-plugin-mineru` 形式，**须实测确认**），并说明它不在默认组合里、不进制品 |
 
 ---
 

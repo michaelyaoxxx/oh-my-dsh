@@ -32,6 +32,30 @@ while IFS= read -r _p; do
   [ -n "$_p" ] && SKIP_MOUNT+=("$_p")
 done < <(node "$ROOT/scripts/check-components.mjs" --list runtime:excluded 2>/dev/null || true)
 
+# 反向检查：**已挂载但现已 excluded** 的包。
+# 本脚本只做「跳过添加」，从不摘除——某个组件从 required 改成 excluded 后，profile 里
+# 上一次留下的 link 仍在，于是 config 说「不进运行时」而实际照样被加载。这正是本仓
+# 反复被咬的「配置一套、实际一套」，故至少让它**响亮**：不静默。
+# 摘除动作不在这里做（需要 dsh CLI 的对应子命令，未验证前不动 profile）。
+PROFILE_PKG="$DSH_HOME/profiles/$PROFILE/package.json"
+if [ -f "$PROFILE_PKG" ]; then
+  for _s in ${SKIP_MOUNT[@]+"${SKIP_MOUNT[@]}"}; do
+    # 用路径后缀匹配而非解析符号链接：profile 里的 link: 值就是 <ROOT>/<相对路径>，
+    # 后缀比对对 ROOT 是否含符号链接都不敏感。
+    if node -e '
+      const p = require(process.argv[1])
+      const rel = process.argv[2]
+      const hit = Object.values(p.dependencies ?? {}).some((v) => String(v).replace(/^link:/, "").endsWith("/" + rel))
+      process.exit(hit ? 0 : 1)
+    ' "$PROFILE_PKG" "$_s"; then
+      echo "警告: ${_s} 声明 runtimeScope=excluded，但仍挂在 profile ${PROFILE} 中。" >&2
+      echo "      组件目录说「不进运行时」，实际却仍会被加载——两者不一致。" >&2
+      echo "      处置：确认后从 ${PROFILE_PKG} 移除该条 link 并重跑本脚本；" >&2
+      echo "      需要连 node_modules 一并收敛时，删掉整个 profile 目录重跑本脚本。" >&2
+    fi
+  done
+fi
+
 # dsh plugin 在 profile 目录里 spawn `pnpm`，corepack 从该目录向上找
 # packageManager。本仓根没有 package.json，corepack 会回落 latest（pnpm 12.x 的
 # bin 布局与本机 Node 的 corepack 不兼容）。在 $DSH_HOME 放一个只含 packageManager
@@ -78,7 +102,9 @@ for d in plugins/*/; do
   _skip=0
   for _s in ${SKIP_MOUNT[@]+"${SKIP_MOUNT[@]}"}; do [ "$root_dir" = "$_s" ] && _skip=1; done
   if [ "$_skip" = 1 ]; then
-    echo "==> 跳过挂载: ${root_dir}（终端前端，属独立 profile；见 scripts/link-tui.sh）"
+    # 理由不写死在这里：excluded 的原因不止一种（dsh-tui 是终端前端跑独立 profile；
+    # dsh-plugin-mineru 是 AGPL 边界）。原因写在组件目录的 notes 里，那里是事实源。
+    echo "==> 跳过挂载: ${root_dir}（runtimeScope=excluded，原因见 config/components.json）"
     continue
   fi
   # 聚合包经 link: 挂载时 pnpm 不装它的依赖，而 loader 从 profile 目录解析 patch 行

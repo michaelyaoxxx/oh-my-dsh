@@ -23,7 +23,7 @@
 | `harness` | MIT | [`github`](https://github.com/deepseek-ai/deepseek-harness.git) | bundle, sbom, provenance | 包含 |
 | `dsh-web` | Apache-2.0 | [`github`](https://github.com/zhu1090093659/dsh-web.git) | bundle, sbom | 包含 |
 | `dsh-better-sidebar` | MIT | [`github`](https://github.com/omdsh-dev/DSH-better-sidebar.git) | bundle, sbom | 包含 |
-| `dsh-plugin-mineru` | AGPL-3.0 | [`github`](https://github.com/HuanLinOTO/dsh-plugin-mineru.git) | bundle, sbom | 包含 |
+| `dsh-plugin-mineru` | AGPL-3.0 | [`github`](https://github.com/HuanLinOTO/dsh-plugin-mineru.git) | — | **排除** |
 | `modlens` | MIT | [`github`](https://github.com/liustack/modlens.git) | bundle, sbom | 包含 |
 | `dsh-automation` | MIT | [`gerrit-fork`](https://github.com/michaelyaoxxx/dsh-automation.git) | bundle, sbom | 包含 |
 | `dsh-market` | MIT | [`github`](https://github.com/dsh-market/dsh-market.git) | bundle, sbom | 包含 |
@@ -46,15 +46,18 @@
 
 9 个组件：`harness`、`dsh-better-sidebar`、`modlens`、`dsh-automation`、`dsh-market`、`dsh-agent-teams`、`dsh-at-file`、`modsearch`、`dsh-tui`
 
-## AGPL 边界
+## Copyleft 边界（AGPL / GPL）
 
-以下组件为 **AGPL-3.0**，其 copyleft 义务按下列状态生效：
+以下组件为 copyleft 许可，按下列状态生效：
 
-- `dsh-plugin-mineru`：**进制品**（bundle, sbom）；**在默认运行时**
+- `dsh-plugin-mineru`（AGPL-3.0）：不进制品；不在默认运行时
 
-> ⚠️ **进制品的 AGPL 组件会把整个制品变成 AGPL-3.0 分发**：AGPL-3.0 与 Apache-2.0 只**单向**
-> 兼容（Apache-2.0 可并入 AGPL，反之不行）。制品一旦对外分发，须提供完整对应源码并附
-> AGPL 全文，且 §13 的网络服务条款适用。**对外分发前必须复核。**
+**当前没有任何 copyleft 组件进制品** —— 制品不承载 AGPL/GPL 义务。
+
+> 这一状态是**刻意维持**的：AGPL-3.0 与 Apache-2.0 只**单向**兼容——Apache-2.0 代码可以并入
+> AGPL 作品，**反之不行**（Apache-2.0 的专利与赔偿条款对 AGPL 构成附加限制）。
+> 因此一旦任何 AGPL 组件进入 bundle 制品，**整个制品实际只能按 AGPL-3.0 分发**，
+> 其中所有 Apache-2.0 组件也随之被覆盖。改动 `releaseScope` 前须先过 ADR 与法务确认。
 
 ## 重新生成
 

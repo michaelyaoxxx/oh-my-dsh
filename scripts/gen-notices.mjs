@@ -105,29 +105,35 @@ function render(catalog, urls) {
     p()
   }
 
-  // AGPL 边界
-  const agpl = components.filter((c) => c.license === 'AGPL-3.0')
-  p('## AGPL 边界')
+  // copyleft（AGPL/GPL）边界。规则与裁决理由见 docs/cicd/03-artifact-and-release.md §3.3。
+  const COPYLEFT = ['AGPL-3.0', 'GPL-3.0']
+  const copyleft = components.filter((c) => COPYLEFT.includes(c.license))
+  const shipped = copyleft.filter((c) => c.releaseScope.length)
+  p('## Copyleft 边界（AGPL / GPL）')
   p()
-  if (!agpl.length) {
-    p('当前组件集合中**没有** AGPL 组件，制品不承载 AGPL 义务。')
-    p()
-    p('> 这一状态是**刻意维持**的：AGPL-3.0 与 Apache-2.0 只**单向**兼容——Apache-2.0 代码可以并入')
-    p('> AGPL 作品，反之不行。一旦任何 AGPL 组件进入 bundle 制品，**整个制品实际只能按 AGPL-3.0')
-    p('> 分发**（含 §13 的「网络交互用户可获取对应源码」义务）。')
-    p('> 因此 AGPL 组件必须保持在 `releaseScope: []`。改动此处需先过 ADR 与法务确认。')
+  if (!copyleft.length) {
+    p('当前组件集合中**没有** AGPL/GPL 组件，制品不承载 copyleft 义务。')
   } else {
-    p('以下组件为 **AGPL-3.0**，其 copyleft 义务按下列状态生效：')
+    p('以下组件为 copyleft 许可，按下列状态生效：')
     p()
-    for (const c of agpl) {
+    for (const c of copyleft) {
       const inRel = c.releaseScope.length ? `**进制品**（${c.releaseScope.join(', ')}）` : '不进制品'
       const inRun = c.runtimeScope === 'excluded' ? '不在默认运行时' : '**在默认运行时**'
-      p(`- \`${c.name}\`：${inRel}；${inRun}`)
+      p(`- \`${c.name}\`（${c.license}）：${inRel}；${inRun}`)
     }
     p()
-    p('> ⚠️ **进制品的 AGPL 组件会把整个制品变成 AGPL-3.0 分发**：AGPL-3.0 与 Apache-2.0 只**单向**')
-    p('> 兼容（Apache-2.0 可并入 AGPL，反之不行）。制品一旦对外分发，须提供完整对应源码并附')
-    p('> AGPL 全文，且 §13 的网络服务条款适用。**对外分发前必须复核。**')
+    if (!shipped.length) {
+      p(`**当前没有任何 copyleft 组件进制品** —— 制品不承载 AGPL/GPL 义务。`)
+      p()
+      p('> 这一状态是**刻意维持**的：AGPL-3.0 与 Apache-2.0 只**单向**兼容——Apache-2.0 代码可以并入')
+      p('> AGPL 作品，**反之不行**（Apache-2.0 的专利与赔偿条款对 AGPL 构成附加限制）。')
+      p('> 因此一旦任何 AGPL 组件进入 bundle 制品，**整个制品实际只能按 AGPL-3.0 分发**，')
+      p('> 其中所有 Apache-2.0 组件也随之被覆盖。改动 `releaseScope` 前须先过 ADR 与法务确认。')
+    } else {
+      p('> ⚠️ **有 copyleft 组件进制品，整个制品按该 copyleft 许可分发**：须附全文、提供完整')
+      p('> 对应源码；AGPL 另触发 §13 的「网络交互用户可获取对应源码」义务。')
+      p('> **对外分发前必须复核。**')
+    }
   }
   p()
   p('## 重新生成')
