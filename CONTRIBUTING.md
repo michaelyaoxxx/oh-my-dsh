@@ -51,8 +51,8 @@ make check     # 一次跑完：组件目录 / 许可证 / 第三方声明 / pin
 | 改动区域 | 必须做 |
 | --- | --- |
 | `scripts/*.sh`、`deploy/*` | 上面的自检全跑；shellcheck 必须全绿（CI 用 `-S style`，固定 0.11.0） |
-| `config/components.json` | `check-components.mjs`（声明层：双向校验 + license 词表 + 与 `package.json` 核对）+ `check-licenses.mjs`（**内容层**：读各组件 LICENSE 判 copyleft）+ `check-pins.sh` |
-| `scripts/check-components.mjs` / `check-licenses.mjs`（**门禁逻辑本身**） | ⚠️ 改了判定逻辑**必须**跑 `bash scripts/probe-license-gate.sh` 确认覆盖边界没退化（它是这两道门的**回归基线**）。**不要把它放进 CI**——它恒 exit 0，回答的是「门禁覆盖什么」而非「这次合规吗」 |
+| `config/components.json` | 改了组件集合 / `license` 时**先** `node scripts/gen-notices.mjs` 重新生成声明——它是**合规文档**，不改就会让 `make check` 的 `--check` 失败（有意的） |
+| `scripts/check-components.mjs` / `check-licenses.mjs`（**门禁逻辑本身**） | ⚠️ 改了判定逻辑**必须**跑 `bash scripts/probe-license-gate.sh` 确认覆盖边界没退化（它是这两道门的**回归基线**；`make check` 已用 `--strict` 纳入）。⚠️ 它防不住**蓄意**攻击者：能改门禁的人也能改它，真正的解法是门禁脚本从受信 ref 取 |
 | `patches/*.yml` | `make link-plugins` 后 `dsh --profile dsh --dump-config`，确认**没有** patch 抹掉旁键（整表替换语义，见 plugin-dev.md） |
 | `.github/workflows/*`（**默认不改**） | CI/CD 载体是 Gerrit + Jenkins，`.github/workflows/` 只是开源预留通路。只有两类例外可改：供应链安全修复、把新校验挂到门禁上（**逻辑写在 `scripts/`**）。例外改动时另需：YAML 能解析；Action **pin 到 commit SHA** 并注明版本 |
 | `docs/cicd/*` | 它是 CI/CD 的规范源；改动需说明影响的阶段/Job/脚本/凭据/回滚路径 |

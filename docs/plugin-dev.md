@@ -45,10 +45,13 @@ git commit -m "chore: bump dsh-web pin" && git push
 6. **登记一处即可**：把组件写进 [`config/components.json`](../config/components.json)（`pinPolicy` / `pinRef` / `license` / `ciScope` / `releaseScope` / `runtimeScope` …）。这是**唯一**需要改的地方——CI 的 `verify.yaml`、`release.yaml`、`release.sh` 快照清单、AGENTS 与 README 都从它派生或只链接它。改完跑：
 
    ```sh
-   node scripts/check-components.mjs      # 双向校验 + license 与组件自身声明核对
-   bash scripts/check-pins.sh             # pin 语义校验（tag 相等 / branch 祖先）
-   node scripts/gen-notices.mjs           # 重新生成第三方声明（它是合规文档，会 --check 拒过期）
+   node scripts/gen-notices.mjs   # ← 新增/移除组件后**必须先跑**：声明文件会过期，
+                                  #   而 make check 里的 --check 会因此失败（有意的）
+   make check                     # 一次跑完全部自检：组件目录 / 许可证 / 声明 / pin / shellcheck
    ```
+
+   > **清单以 [`scripts/check-all.sh`](../scripts/check-all.sh) 为唯一事实源**（`--list` 可列出），
+   > 本地 `make check` 与 CI 的 step 0 跑同一份——这里刻意**不再抄命令**，抄一份就多一处漂移。
 
    > 这一步**曾经**是「手工改五处」：`verify.yaml`、`release.yaml`、`release.sh` 的
    > `check_pin`/`check_pin_tag`、`AGENTS.md` 稳定分支行、`README.md` plugins 行。
