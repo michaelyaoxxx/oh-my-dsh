@@ -337,6 +337,14 @@ const REQUIRED_FIELDS = [
 
 `scripts/probe-license-gate.sh` 的 `stage()` 里，把 `"buildMode": "source-build"` 改为 `"prepareMode": "source-build"`，并删掉 `"packageManager": "pnpm",`，把 `cat > ... <<EOF` 里的 `"version": 1` 改为 `"version": 2`。
 
+**`scripts/probe-catalog.sh` 也要同步改**（T1 用 v1 字段名是对的，因为 T1 时点校验器还是 v1；本任务把校验器升到 v2，夹具必须跟上，否则它会恒红）：
+
+- `good_component()` 的 `buildMode: "source-build"` → `prepareMode: "source-build"`
+- 删掉 `good_component()` 里的 `packageManager: "pnpm",`
+- 夹具自检那行 `write_catalog "[$(good_component ok plugins/ok)]" 1` 的版本参数 `1` → `2`
+- `0b` 能力自检那行同样 `1` → `2`
+- 删掉 `good_component()` 上方那段「这里要的是 buildMode / packageManager，**不是** prepareMode」的过渡注释——它已过期
+
 - [ ] **Step 8: 跑全部校验**
 
 Run: `bash scripts/probe-catalog.sh && bash scripts/probe-license-gate.sh --strict && node scripts/check-components.mjs`
