@@ -1,0 +1,38 @@
+# 给 profile dsh 挂一个**可见的** logger exporter。
+#
+# 根因：cordis 的 LoggerService 构造函数只注册了**一个内存 ring buffer** exporter
+# （harness/vendor/cordis/src/logger.ts:213-221，bufferSize=1000）。而 harness 的
+# base / web-app bundle 都**没有**挂任何 operational exporter（实测 grep 全部 bundle
+# 的 cordis.patch.yml，零命中）。于是插件里的 `ctx.logger.warn/error` 只进内存环形缓冲：
+# 进程一重启就没了，终端、Make 日志、journald 全都看不到。
+#
+# 这不是理论问题——本仓挂载的插件确实在用这条不可见路径报告失败，例如
+# dsh-automation 的 scheduler / admission / persistence 失败
+# （plugins/dsh-automation/src/service.ts）。
+#
+# 处置：挂 harness 自带的 `@deepseek-ai/cordis-plugin-logger-console`
+# （harness/vendor/logger-console，MIT，v1.0.2）。它的 ConsoleExporter 在构造时
+# `ctx.logger.exporter(this)`，把消息渲染后写 stdout——于是 journald 能收到。
+#
+# ⚠️ **这解决的是「可见性」，不是 review 要求的「JSON Lines 协议」。**
+#    ConsoleExporter 输出的是**格式化文本**（`yyyy-MM-dd hh:mm:ss [I] …`），不是结构化
+#    JSON；harness 里也**没有**现成的 JSON exporter（实测只有 logger-console 与
+#    webworker-runtime 两处注册 exporter）。结构化日志契约是 P1-7 的范畴，
+#    需要自写 exporter——本 patch 不假装做到了。
+#
+# ⚠️ **解析面已验证**（2026-09-15）：本 entry 起初看起来不可解析——`createRequire`
+#    从 profile 目录 resolve 它会 MODULE_NOT_FOUND，而对照片 `@deepseek-ai/cordis-plugin-timer`
+#    却能解析。但那是**测试方法不对**：loader 有它自己的解析根，不等同于 createRequire。
+#    实跑验证：带本 entry 启动 profile dsh **成功**，且日志出现 ConsoleExporter 的
+#    渲染格式。**结论以实跑为准，不要拿 createRequire 反推 loader 行为。**
+#
+# ⚠️ 不要把 session-telemetry 的 exporter 拿来当 operational logger：那承载的是
+#    敏感的 Session 事件，语义、权限、保留策略完全不同。
+#
+# colors: false —— 生产输出进 journald/集中采集，不需要 ANSI 转义序列。
+# showTime 保持默认 'yyyy-MM-dd hh:mm:ss '，与 journald 自带时间戳并存不冲突。
+- insert:
+    - id: logger-console
+      name: '@deepseek-ai/cordis-plugin-logger-console'
+      config:
+        colors: false
