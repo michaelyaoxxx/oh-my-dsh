@@ -145,10 +145,21 @@ remote_sudo() { # $1=target；$2=服务器命令（单字符串）
 }
 
 # rsync 参数单一来源：dry-run 打印与真实执行不漂移；-e 复用 SSH_OPTS 防挂起。
+#
+# ⚠️ **排除清单是 containment，不是发布内容策略。** `.gitignore` 只约束 Git，对 rsync 无效——
+# 凡是没有在这里排除的东西都会进服务器。维护黑名单迟早会漏（新工具、新临时目录）。
+# 根治办法是 manifest/allowlist 驱动的制品打包（见 docs/cicd/03-artifact-and-release.md），
+# 在那之前：**新增任何会落地的本地目录时，必须同时加进这里。**
 RSYNC_ARGS=(
   -az --delete --rsync-path='sudo rsync'
   --exclude '.git' --exclude '.dsh/' --exclude 'node_modules/'
   --exclude 'deploy/hosts' --exclude '.superpowers/' --exclude '.DS_Store'
+  # 本地开发日志：含隧道 URL、错误栈、绝对路径，且 Makefile 每次运行都追加
+  --exclude 'log/'
+  # 凭据与本地工具状态
+  --exclude '.env' --exclude '.env.*' --exclude '.claude/' --exclude '.netrc'
+  # 散落的日志与编辑器/系统垃圾
+  --exclude '*.log' --exclude '*.swp' --exclude '*~'
   -e "ssh ${SSH_OPTS[*]}"
 )
 
@@ -351,13 +362,42 @@ valid_target() { # $1=hosts 行
 # ---- 本地预检 ----
 command -v rsync >/dev/null 2>&1 || { echo "错误: 本地未找到 rsync（同步需要）。" >&2; exit 1; }
 command -v ssh >/dev/null 2>&1 || { echo "错误: 本地未找到 ssh（部署需要）。" >&2; exit 1; }
-# submodule 保真检查：deploy 部署的是 pin 快照，任何偏离都拒绝（+ 工作树改动 / - 未初始化 / U 冲突）。
-# 未初始化的空目录会被 rsync 同步上去，remote-install 静默跳过 → 假成功，必须在这里拦下。
-SUB_STATUS="$(git submodule status 2>/dev/null || true)"
+# ── 快照保真：部署的是 **pin 快照**，任何偏离都在写入远端之前拒绝 ──────────────
+# 为什么必须拦：rsync 同步的是**工作树**，而部署标识只写主仓 HEAD（见下方 LOCAL_SHA）。
+# 若工作树与 HEAD 不一致，落地的字节与标识就对不上——审计与回滚判断同时失效。
+#
+# 三层，逐层收紧；后两层**必须 --recursive**（仓内含嵌套 submodule 的，只看顶层会漏）：
+#   ① 根仓工作树：tracked 改动 + untracked 文件
+#   ② 各 submodule 的 **gitlink** 是否偏离 pin（`+` 偏离 / `-` 未初始化 / `U` 冲突）
+#   ③ 各 submodule 的**工作树内容** —— ②只看 gitlink 指向，改了文件没提交时 gitlink 仍是 pin
+# ①用 --ignore-submodules=dirty：让根仓的报错只讲根仓的事，submodule 的问题由 ②③ 报，
+# 否则用户会在「主仓不干净」的提示下找半天，实际是某个插件有未提交改动。
+ROOT_DIRTY="$(git status --porcelain --untracked-files=all --ignore-submodules=dirty 2>/dev/null || true)"
+if [ -n "$ROOT_DIRTY" ]; then
+  echo "错误: 主仓工作树不干净，拒绝部署（部署的是 pin 快照，不是当前工作树）：" >&2
+  printf '%s\n' "$ROOT_DIRTY" | sed 's/^/  /' >&2
+  echo "请先提交或还原后重试。" >&2
+  exit 1
+fi
+
+# 未初始化的空目录会被 rsync 同步上去，remote-install 静默跳过 → 假成功，必须拦下。
+SUB_STATUS="$(git submodule status --recursive 2>/dev/null || true)"
 if printf '%s\n' "$SUB_STATUS" | grep -q '^[+-U]'; then
   echo "错误: submodule 状态偏离 pin 快照，拒绝部署：" >&2
   printf '%s\n' "$SUB_STATUS" | grep '^[+-U]' | sed 's/^/  /' >&2
   echo "请先处理 submodule（未初始化则运行 make setup；有改动则提交或还原）后重试。" >&2
+  exit 1
+fi
+
+# $displaypath 由 `git submodule foreach` 注入并展开，不是 bash 变量。改成双引号会被
+# bash 先展开成空串，反而丢掉「是哪个 submodule」——故此处必须保持单引号。
+# shellcheck disable=SC2016
+SUB_DIRTY="$(git submodule foreach --recursive --quiet \
+  'git status --porcelain --untracked-files=all | sed "s|^|$displaypath: |"' 2>/dev/null || true)"
+if [ -n "$SUB_DIRTY" ]; then
+  echo "错误: submodule 工作树内容不干净，拒绝部署（gitlink 对了不代表内容就是 pin）：" >&2
+  printf '%s\n' "$SUB_DIRTY" | sed 's/^/  /' >&2
+  echo "请到对应 submodule 内提交或还原后重试。" >&2
   exit 1
 fi
 [ -f "$HOSTS_FILE" ] || {

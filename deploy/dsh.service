@@ -14,6 +14,19 @@ Environment=DSH_HOME=@DEPLOY_DIR@/.dsh
 Environment=NODE_ENV=production
 # 与 remote-install.sh 的 corepack 防御一致：解析不到 pin 的 pnpm 时宁可报错也不回落 latest
 Environment=COREPACK_DEFAULT_TO_LATEST=0
+# ── 数据驻留：生产默认**关闭** session telemetry ──────────────────────────────
+# harness base bundle 的默认是 `FEEDBACK_ONLY`，且 OTLP URL 指向**外部**
+# `harness-telemetry.deepseeksvc.com`。用户提交反馈时可能上传含内部路径/工作内容的
+# Session 前缀（harness/packages/session/session-telemetry-otel/README.md 明列：
+# 消息、工具参数与结果、system prompt、todo、摘要、cwd），而 redaction 由部署方负责。
+# 这与 ADR-0004「源码、日志、evidence、用户数据默认留内网」冲突，故生产置 DISABLED。
+#
+# ⚠️ 变量名是 `DSH_TELEMETRY_MODE`，合法值为 `DISABLED` / `FEEDBACK_ONLY` / …
+#    （见 harness/packages/session/session-telemetry-otel/src/index.ts 的 SessionTelemetryMode）。
+#    **不存在** `DSH_TELEMETRY_DISABLED` —— 设了不会报错，只会静静地不生效。
+# 若业务决定保留反馈 telemetry：改发内网 OTLP（同时设 DSH_TELEMETRY_OTLP_URL），
+# 并在 exporter 前实现、测试、版本化 redaction；这需要先新增 ADR。
+Environment=DSH_TELEMETRY_MODE=DISABLED
 # 源码运行入口是 harness 根脚本 `pnpm dsh`（harness/node_modules/.bin 下没有 dsh）。
 # `dsh web` 别名 boot 官方模板 web profile；挂载目标（remote-install.sh）是 profile
 # dsh，故显式 `--profile dsh` 使挂载与 boot 一致。
