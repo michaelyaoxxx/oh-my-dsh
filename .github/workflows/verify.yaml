@@ -4,18 +4,22 @@ on:
     branches: [main]
   pull_request:
 
+# 最小权限：本 workflow 只读仓库内容，不需要写任何东西。
+permissions:
+  contents: read
+
 jobs:
   verify:
     runs-on: ubuntu-latest          # x86-64，与服务器同平台
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           submodules: recursive      # 带 submodule 检出
           fetch-depth: 0
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           version: 11.7.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
@@ -26,8 +30,18 @@ jobs:
       # 1.5 shellcheck 静态检查（本地以 0.11.0 -S style 全绿；CI 固定同版本语义）
       - name: ShellCheck scripts
         run: |
+          set -eu
           scversion="v0.11.0"
-          wget -qO- "https://github.com/koalaman/shellcheck/releases/download/${scversion}/shellcheck-${scversion}.linux.x86_64.tar.xz" | tar -xJ
+          asset="shellcheck-${scversion}.linux.x86_64.tar.xz"
+          url="https://github.com/koalaman/shellcheck/releases/download/${scversion}/${asset}"
+          # 校验和是**信任锚点**：校验后我们执行的是这个确定的字节序列，而不是「当前 URL 上的内容」。
+          # ⚠️ 来源说明：shellcheck 的 release **未提供** SHA256SUMS 资产，故该值系首次下载官方
+          #    归档后本地计算（TOFU）。它能防「同一 URL 上的资产被替换/回归」，**不构成**对首次
+          #    下载的独立验证。升级 scversion 时必须同步更新此值。
+          sha256_expected="8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198"
+          curl -fsSL -o "$asset" "$url"
+          echo "${sha256_expected}  ${asset}" | sha256sum -c -
+          tar -xJf "$asset"
           "shellcheck-${scversion}/shellcheck" -S style scripts/*.sh deploy/remote-install.sh
       # 2. 冒烟：make setup（真实构建）+ link 插件 + 起服务健康检查
       - name: Setup

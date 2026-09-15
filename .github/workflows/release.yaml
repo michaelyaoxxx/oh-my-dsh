@@ -3,23 +3,32 @@ on:
   push:
     tags: ['v*']
 
+# 权限收在 job 级（非 workflow 级）：只有这个 job 需要写，且只为创建 Release。
+# 注意：按设计 GitHub Actions 只是**保留通路**，不承担内部发布授权 ——
+# 内部的 Verified/晋级/部署由 Gerrit + Jenkins 负责（见 docs/cicd/）。
 jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           submodules: recursive
           fetch-depth: 0
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           version: 11.7.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
+      # 0. pin 校验（原先缺失：release 只在 verify 里校验过 pin，但 release 由
+      #    tag push 独立触发，不经过 verify —— 一个被误推的 tag 会直接建 Release）。
+      - name: Check component pins
+        run: |
+          node scripts/check-components.mjs
+          bash scripts/check-pins.sh
       # 干净构建 + link + 冒烟，通过才建 Release
       - name: Build & smoke
         env:
@@ -53,6 +62,6 @@ jobs:
             done < <(bash scripts/check-pins.sh --list)
           } > RELEASE_NOTES.md
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           body_path: RELEASE_NOTES.md

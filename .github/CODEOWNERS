@@ -1,0 +1,42 @@
+# CODEOWNERS — 评审归属
+#
+# 语法：<路径模式>  <@用户或 @组织/团队>…
+# 靠后的规则优先。改本文件本身也需要 owner 评审。
+#
+# ⚠️ 【待填】把 @michaelyaoxxx 替换为本仓实际的 owner/团队；多 owner 用空格分隔。
+
+# 默认：所有改动都需要本仓 owner
+*                                   @michaelyaoxxx
+
+# ── 高风险面：改这些必须 owner 评审 ──────────────────────────────────────────
+# 部署脚本对目标执行 rsync --delete，误配不可逆
+/scripts/deploy-remote.sh           @michaelyaoxxx
+/deploy/                            @michaelyaoxxx
+/deploy/dsh.service                 @michaelyaoxxx
+
+# 组件与 pin：改这里会改变「谁参与 CI、谁进制品」
+/config/components.json             @michaelyaoxxx
+/scripts/check-pins.sh              @michaelyaoxxx
+/scripts/check-components.mjs       @michaelyaoxxx
+/.gitmodules                        @michaelyaoxxx
+
+# profile 组合与补丁：patch 的 config 是整表替换，容易抹掉旁键
+/patches/                           @michaelyaoxxx
+/scripts/merge-profile-patch.mjs    @michaelyaoxxx
+
+# 构建与安装：决定哪些代码在 CI 里被执行
+/scripts/setup.sh                   @michaelyaoxxx
+/scripts/link-plugins.sh            @michaelyaoxxx
+/scripts/link-tui.sh                @michaelyaoxxx
+
+# CI 与供应链：Action 必须 pin 到 commit SHA
+/.github/                           @michaelyaoxxx
+
+# 安全策略与许可
+/SECURITY.md                        @michaelyaoxxx
+/LICENSE                            @michaelyaoxxx
+
+# CI/CD 规范源
+/docs/cicd/                         @michaelyaoxxx
+
+# 上游 submodule 的内容不由本仓评审 —— 它们不在此列出（本仓不修改其内容）
