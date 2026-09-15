@@ -1,5 +1,12 @@
 # dsh 超级仓库设计
 
+> ⚠️ **历史文档，非权威。** 本文是 2026-09-08 的初版设计，其中「GitHub 为主链、
+> 源码部署、GitHub Release」的描述**已被后续设计取代**。
+> **CI/CD 的权威入口是 [docs/cicd/README.md](../../cicd/README.md)**；
+> 当前仓库结构以 [README.md](../../../README.md) 与 [config/components.json](../../../config/components.json) 为准。
+> 本文仅用于追溯设计意图，**不得作为实施依据**。
+
+
 - 日期：2026-09-08
 - 状态：已确认（2026-09-08，五节逐节确认）
 

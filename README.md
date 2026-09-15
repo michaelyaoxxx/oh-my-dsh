@@ -15,7 +15,9 @@ make dev       # 启动 DSH Web（$DSH_HOME=./.dsh，插件 link 挂载，改插
 - 远程部署：[docs/deploy.md](docs/deploy.md)
 - 远程访问（在外用手机/另一台电脑）：[docs/remote-access.md](docs/remote-access.md)（含第三方方案尽调 [docs/dsh-remote.md](docs/dsh-remote.md)）
 - 遗留问题：[docs/backlog.md](docs/backlog.md)（未收口事项的单一追踪处）
-- CI/CD 方案：[docs/cicd/](docs/cicd/README.md)（dsh 仓 + Gerrit + Jenkins；含社区调研参考）
+- **CI/CD 权威入口**：[docs/cicd/README.md](docs/cicd/README.md)（Gerrit + Jenkins + Nexus；当前目标是内网主链，GitHub Actions 仅作开源预留）
+- 组件清单：[config/components.json](config/components.json)（谁参与 CI、谁进制品的事实源）
+- 贡献指南：[CONTRIBUTING.md](CONTRIBUTING.md) ・ 安全策略：[SECURITY.md](SECURITY.md)
 - 发布快照：`make release VERSION=v0.1.0`（校验 pin → 打 tag 并推送，CI 冒烟通过后生成 GitHub Release）
 - 全部目标：`make help`
 
