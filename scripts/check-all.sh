@@ -45,6 +45,7 @@ check_components() { run "组件目录（声明层：双向集合 + license 词�
 check_licenses()   { run "组件许可证文件（内容层：读 LICENSE 判 copyleft）"                 node scripts/check-licenses.mjs; }
 check_notices()    { run "第三方声明未过期（合规文档）"                                     node scripts/gen-notices.mjs --check; }
 check_gate_regr()  { run "许可证门禁回归（覆盖边界未被改弱）"                               bash scripts/probe-license-gate.sh --strict; }
+check_catalog()    { run "组件目录校验回归（每条规则都有会失败的样本）"                     bash scripts/probe-catalog.sh --strict; }
 
 # ── 全量额外项 ───────────────────────────────────────────────────────────────
 # pin 校验**要联网**（fetch 各 submodule 的远端 ref），故与离线组分开——
@@ -67,7 +68,7 @@ check_shellcheck() {
 
 if [ "$MODE" = "list" ]; then
   echo "将执行以下检查（mode=${MODE}）："
-  echo "  · [离线] 组件目录 / 组件许可证文件 / 第三方声明 / 许可证门禁回归"
+  echo "  · [离线] 组件目录 / 组件许可证文件 / 第三方声明 / 许可证门禁回归 / 目录校验回归"
   if [ "$MODE" != "offline" ]; then
     echo "  · [联网] submodule pin 校验"
     echo "  · [工具链] shellcheck -S style scripts/*.sh deploy/remote-install.sh"
@@ -84,6 +85,7 @@ check_components
 check_licenses
 check_notices
 check_gate_regr
+check_catalog
 
 if [ "$MODE" = "full" ]; then
   check_pins
