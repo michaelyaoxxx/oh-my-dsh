@@ -333,7 +333,8 @@ const REQUIRED_FIELDS = [
 
 - [ ] **Step 7: 同步两个 fixture 的字段名**
 
-`scripts/probe-catalog.sh` 的 `good_component()` 里，`"prepareMode": "source-build"` 已经是对的；确认 `write_catalog` 的默认 version 参数在 A 组用例里显式传值（已传）。
+`scripts/probe-catalog.sh` 的 `good_component()` **当前用的是 v1 字段名**（`buildMode` + `packageManager`）——
+这是 T1 时点的正确状态，T1 的夹具自检依赖它。本任务把它改成 v2（见下），**不要以为它已经是对的**。
 
 `scripts/probe-license-gate.sh` 的 `stage()` 里，把 `"buildMode": "source-build"` 改为 `"prepareMode": "source-build"`，并删掉 `"packageManager": "pnpm",`，把 `cat > ... <<EOF` 里的 `"version": 1` 改为 `"version": 2`。
 
