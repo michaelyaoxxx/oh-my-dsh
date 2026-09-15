@@ -79,11 +79,21 @@ git commit -m "chore: bump dsh-web pin" && git push
 - **装完某插件后，base 里某行的 config 少了键**（如装 modsearch 后 `web` 行的 `fetchProvider: http` 消失）：该插件的 `cordis.patch.yml` 改写了 base 的同一行，而 **patch 的 `config` 是整表替换**——它只列了自己要改的键，其余旁键就被抹掉。**dump 与 boot 都可能全绿**（被抹的键恰好是 optional 且有「恰好一个可用 provider 则自动选择」之类的回退），所以这类缺陷要靠**对比装前装后的 dump** 或读 config 语义才发现。处置：在本仓 `patches/*.yml` 里把该行的 config **整份**补齐（所有键都要列；只列一个会把另一个抹回默认），并像 `patches/inject-webserver-dsh-connection.yml` 那样在注释里写明维护约束（base 若再加键，本 patch 需同步补列）。
 - 插件仓的 `devDependencies` 写成 **`link:../<某个同级目录>/...`**（如 dsh-at-file 全部指向作者本地的 `../deepseek-harness/...`）：这是**开发者本地布局**，在我们的目录结构下不存在。**pnpm 不校验 link 目标**，所以安装照样 exit 0，只是那些依赖变成**悬空软链**。判断有没有影响看两点：① 根 `main` 是否已提交（已提交则跳过构建、devDeps 永不被用）；② 运行时 `lib/` 里的 harness 包导入能否解析——实测**会**经 DSH 的 profile 模块回退链（`.dsh/profiles/node_modules`）解析成功，boot 无 `ERR_MODULE_NOT_FOUND`。两者都满足就无需处理；若真的需要那些 devDep（例如必须构建），得造出对应路径（如把 `harness/` 另做一个同名软链）或改用 fork 修正依赖。
 - **`npm ci` 报 `EBADENGINE` 警告但成功**：传递依赖要求的 Node 版本高于本机（如 rolldown-plugin-dts 要 `^22.18.0 || >=24.11.0`，本机 v24.3.0）。属**警告不阻断**；若随之出现真实构建报错，先把 Node 升到要求的下限再排查。
-- **想验证 boot 但 3080 被自己另一个实例占着**：不要抢占端口、也不要共用同一个 `DSH_HOME`（两个实例并发写同一会话库有风险）。改用 `--port 0`（OS 分配空闲端口）+ 复制一份 `DSH_HOME` 到 /tmp 做隔离实例。**注意**：复制后 profile 的 `node_modules` 里那些**相对路径**符号链接（如 `@linxin666/dsh-client-ui-session-id -> ../../../../../plugins/…`）会断，表现为 `cannot resolve profile bundle "…"`；把副本里的链接重写成指向原目标的绝对路径即可：
+- **想验证 boot 但 3080 被自己另一个实例占着**：不要抢占端口、也不要共用同一个 `DSH_HOME`（两个实例并发写同一会话库有风险）。改用 `--port 0`（OS 分配空闲端口）+ 复制一份 `DSH_HOME` 到 /tmp 做隔离实例。**注意**：复制后 profile 的 `node_modules` 里那些**相对路径**符号链接（如 `@linxin666/dsh-client-ui-session-id -> ../../../../../plugins/…`）会断，表现为 `cannot resolve profile bundle "…"`。修法是按**原 DSH_HOME** 解析出绝对目标再写回，并覆盖**整棵副本**（断链不只在 `profiles/<p>/node_modules` 下）：
   ```sh
-  cd <原 DSH_HOME>/profiles/dsh/node_modules
-  find . -type l | while read -r l; do tgt=$(realpath "$l") && ln -sfn "$tgt" "/tmp/dsh-verify/profiles/dsh/node_modules/$l"; done
+  ORIG=<原 DSH_HOME>; TRIAL=/tmp/dsh-trial
+  find "$TRIAL" -type l | while IFS= read -r l; do
+    tgt=$(readlink "$l"); case "$tgt" in /*) continue;; esac
+    abs=$(realpath "$ORIG/$(dirname "${l#$TRIAL/}")/$tgt" 2>/dev/null) || { echo "UNRESOLVED: $l"; continue; }
+    ln -sfn "$abs" "$l"
+  done
   ```
+  ⚠️ **别照抄「在副本内 `realpath "$l"`」那种写法**：悬空链上 BSD `realpath` 直接失败，`&&` 短路后**静默什么都不做**——恰好漏掉的就是真正断掉的那些，还看不出错。自查：`find "$TRIAL" -type l ! -exec test -e {} \; -print`。该自查**原样跑在原件上也会列 4 条**（`profiles/node_modules/{fs-ext,@deepseek-ai/node-addon-landlock-run,@deepseek-ai/dsh-client-ui-sidebar-textpreview}` 与 `@huanlin/dsh-plugin-mineru`）——那是 pnpm 残留的既有悬空链，与复制无关，别把它们当成本次断链的线索。
+- **复制 `DSH_HOME` 到别处后跑 `dsh plugin add`，插件会从 `dsh.profile.bundles` 里静默消失**（`add` 自身不报错，直到 boot 才以 `cannot resolve profile bundle` 炸）。根因在 `dsh plugin add` 的三段结构（`harness/apps/cli/src/plugin.ts`：init → `spawnSync pnpm` → `reconcilePlugins`）：**pnpm 把 `link:` 依赖写成相对符号链接**，副本深度不同即悬空；而 `reconcilePlugins` 在 **pnpm 之后**才跑，用 `resolveBundleDir`（`harness/packages/boot/app-boot/src/profile.ts`，判据是 `existsSync` 而非 `createRequire`）解析每个依赖，解析不到就按「曾是依赖、现已不是 bundle」把它 `splice` 出 `bundles` 并**回写 manifest**。后果是**每跑一次 `add` 就再剔一次**——包括你刚手工补回去的那些，所以「先补 bundles 再 add」永远补不回来。**正确顺序**：所有 `add` 做完 → **最后**绝对化一次 → 直接 boot，**之后不要再 add**。自查：
+  ```sh
+  node -e 'console.log(require("<DSH_HOME>/profiles/<p>/package.json").dsh.profile.bundles.join("\n"))'
+  ```
+  （实测于 2026-09-15：`cp -a` 出的副本里 11 条 bundle 被剔到 6 条，`mtime` 说明 manifest 确实被回写过。）
 - **插件的修复没法上游、只能在本地背着**（如 dsh-automation 的 `setup` 适配）：在 submodule 内**建分支**提交——submodule 平时处于 detached HEAD，在那里提交虽然也能成 commit，但**没有任何分支指向它**，HEAD 一移动就只剩 reflog 可寻（之后被 gc）。建分支后再提交，恢复与代价：
   ```sh
   git -C plugins/dsh-automation checkout -b adapt/<harness 版本>   # 建分支后提交
