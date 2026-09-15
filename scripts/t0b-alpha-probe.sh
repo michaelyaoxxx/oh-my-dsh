@@ -102,7 +102,7 @@ deploy() { # $1=digest  $2=版本  $3=可选的失败注入点
 
 mkdir -p "$SCRATCH/releases" "$SCRATCH/state"
 cd "$SCRATCH" || exit 1
-echo "scratch: $SCRATCH（本脚本 mktemp 自建；退出时清理，--keep 可保留）"
+echo "scratch: ${SCRATCH}（本脚本 mktemp 自建；退出时清理，--keep 可保留）"
 echo "user: $(id -un) (uid=$(id -u))，非 root: $([ "$(id -u)" != 0 ] && echo 是 || echo 否)"
 
 D1="$(printf 'a%.0s' {1..40})"; D2="$(printf 'b%.0s' {1..40})"
