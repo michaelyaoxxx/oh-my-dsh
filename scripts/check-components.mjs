@@ -45,6 +45,33 @@ const ENUM = {
     'BSD-2-Clause', 'BSD-3-Clause', 'ISC', 'MPL-2.0', 'Unlicense',
   ],
 }
+
+// 字段分类：**schema 级元数据**，不是组件的属性。
+//
+// 为什么不给每个组件加 `status` 标记：同一个事实在 10 个组件里重复 10 遍，
+// 就是 10 个漂移点——正是本 ADR 要治的病。
+//
+// 判据是「有没有**行为或门禁**消费者」，不是「有没有任何代码读它」：
+// gen-notices.mjs 会读 releaseScope/sourceAuthority 去**渲染声明**，那是展示，不构成保证。
+export const FIELD_CLASS = {
+  // operational：影响执行、门禁或发布结果。改它必须同步消费者。
+  path: 'operational',
+  pinPolicy: 'operational',
+  pinRef: 'operational',
+  runtimeScope: 'operational',
+  prepareMode: 'operational',
+  license: 'operational',
+  // declared：可被展示/生成器读取，但无行为执行、无真实性校验，**不构成工程保证**。
+  name: 'declared',
+  sourceAuthority: 'declared',
+  ciScope: 'declared',
+  releaseScope: 'declared',
+  platforms: 'declared',
+  testProfile: 'declared',
+  stateSchema: 'declared',
+  notes: 'declared',
+}
+
 const REQUIRED_FIELDS = [
   'name', 'path', 'sourceAuthority', 'pinPolicy', 'pinRef',
   'ciScope', 'releaseScope', 'runtimeScope', 'platforms', 'prepareMode',
@@ -135,6 +162,14 @@ function validate(catalog) {
     const where = c?.name ? `组件 ${c.name}` : '（无名组件）'
     for (const f of REQUIRED_FIELDS) {
       if (!(f in c)) fail(`${where} 缺字段 ${f}`)
+    }
+    for (const f of Object.keys(c)) {
+      if (!(f in FIELD_CLASS)) {
+        fail(
+          `${where} 出现未登记分类的字段 ${JSON.stringify(f)}。` +
+            `新增字段必须在 FIELD_CLASS 里声明它是 operational 还是 declared（见 config/README.md）。`,
+        )
+      }
     }
     for (const [field, allowed] of Object.entries(ENUM)) {
       const v = c[field]

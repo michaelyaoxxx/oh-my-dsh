@@ -147,6 +147,18 @@ write_catalog "[$(good_component ok plugins/ok)]" 2
 run_case "A3 version=2（当前版本接受）"     GAP
 
 echo
+echo "== B. 字段分类元数据 =="
+# B1 是**基线**：它证明 B2 的红色来自新规则，而不是"任何 catalog 都被拒"。
+# 没有它，B2 的 CAUGHT 可能只是夹具坏了（工具坏了也全红）。
+write_catalog "[$(good_component ok plugins/ok)]" 2
+write_gitmodules "plugins/ok"
+run_case "B1 合法分类（基线，应通过）"      GAP
+# 用一个未登记的字段名：它没有分类，说明有人加了字段却没登记分类
+write_catalog "[$(good_component ok plugins/ok '{"untrackedField":1}')]" 2
+write_gitmodules "plugins/ok"
+run_case "B2 出现未登记分类的字段"          CAUGHT
+
+echo
 if [ "$STRICT" = 1 ] && [ "$FAILED" -ne 0 ]; then
   echo "✗ --strict：${FAILED} 项与预期不符。"
   exit 1
