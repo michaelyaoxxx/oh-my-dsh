@@ -198,22 +198,28 @@ plugin_install() { # $1=目录 $2=安装子命令（pnpm 用 install，npm 用 c
 # /tmp 在 macOS 与 Linux 都存在且足够短；只作用于插件循环，不动 harness 构建。
 export TMPDIR=/tmp
 
-# 谁参与安装/构建由**组件目录**决定（config/components.json 的 ciScope）。
+# 谁参与安装/构建由**组件目录**决定，选择器是具名的 `prepare`（= runtimeScope:required），
+# 语义定义在 scripts/check-components.mjs 的 NAMED_SELECTORS —— **只定义一处**。
 # 例：dsh-tui 是 metadata-only（终端前端，与 dsh-web-app 抢同一批 base 行），
-# ciScope 不含 install → 此处跳过。它仍受 pin 校验覆盖（scripts/check-pins.sh
+# runtimeScope=excluded → 此处跳过。它仍受 pin 校验覆盖（scripts/check-pins.sh
 # 读同一份目录），所以「不安装」不等于「脱离视野」。
+#
+# ⚠️ 这里**曾经**用 `--list ci:install`，那是错的：ciScope 表达的是「CI job 参与范围」，
+# 而绝大多数插件只声明 build/test/package，于是 6 个 runtimeScope=required 的源码构建
+# 插件被整批跳过。本地靠 T2 之前留下的 node_modules 掩盖，**全新环境必炸**。
+# 见 docs/reviews/2026-09-15-incremental-design-review.md P0-1。
 # 先做一次双向校验：目录与 .gitmodules 不一致时立即失败，避免静默漏装一个组件。
 node scripts/check-components.mjs || {
   echo "错误: 组件目录校验失败（见上）。请先修正 config/components.json 与 .gitmodules 的一致性。" >&2
   exit 1
 }
-INSTALL_LIST="$(node scripts/check-components.mjs --list ci:install)"
+INSTALL_LIST="$(node scripts/check-components.mjs --list prepare)"
 
 for d in plugins/*/; do
   [ -f "$d/package.json" ] || continue
   rel="${d%/}"
   if ! printf '%s\n' "$INSTALL_LIST" | grep -qx "$rel"; then
-    echo "==> 跳过安装/构建: ${rel}（组件目录 ciScope 不含 install）"
+    echo "==> 跳过安装/构建: ${rel}（组件目录 runtimeScope 不是 required）"
     continue
   fi
   echo "==> 安装插件依赖: $d"

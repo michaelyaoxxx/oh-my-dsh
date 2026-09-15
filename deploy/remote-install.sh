@@ -203,8 +203,20 @@ plugin_install() { # $1=目录 $2=安装子命令（pnpm 用 install，npm 用 c
   fi
 }
 
+# 与 scripts/setup.sh **同一个具名选择器**（`prepare` = runtimeScope:required，
+# 语义定义在 check-components.mjs 的 NAMED_SELECTORS）：同一份组件目录，本地与
+# 服务器必须得出**同样的「准备哪些组件」计划**。
+# ⚠️ 此前这里**完全不过滤**，会安装并构建 dsh-tui（runtimeScope=excluded、no-build），
+# 与 setup.sh 的过滤逻辑互相矛盾——同一份 manifest 两个消费者给出相反解释。
+# 见 docs/reviews/2026-09-15-incremental-design-review.md P0-1。
+PREPARE_LIST="$(node "$ROOT/scripts/check-components.mjs" --list prepare)"
 for d in plugins/*/; do
   [ -f "$d/package.json" ] || continue
+  rel="${d%/}"
+  if ! printf '%s\n' "$PREPARE_LIST" | grep -qx "$rel"; then
+    echo "==> 跳过安装/构建: ${rel}（runtimeScope 不是 required）"
+    continue
+  fi
   echo "==> 安装插件依赖: $d"
   if [ -f "$d/pnpm-lock.yaml" ]; then
     plugin_install "$d" install --frozen-lockfile

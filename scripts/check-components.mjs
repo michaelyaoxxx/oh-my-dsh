@@ -10,8 +10,9 @@
 //
 // 用法：
 //   node scripts/check-components.mjs [--validate]      # 双向校验 + 字段校验（默认）
+//   node scripts/check-components.mjs --list prepare    # 具名：需被"准备"（安装+构建）的组件
 //   node scripts/check-components.mjs --list ci:<scope> # 枚举 ciScope 含 <scope> 的组件路径
-//   node scripts/check-components.mjs --list runtime    # 枚举 runtimeScope=required 的组件路径
+//   node scripts/check-components.mjs --list runtime:<required|excluded>
 //
 // 退出码：0 通过；1 校验失败
 
@@ -159,14 +160,36 @@ function validate(catalog) {
   return !process.exitCode
 }
 
+// 具名选择器：把「这个语义该读哪个字段」编码在**唯一一处**，供所有消费者共用。
+//
+// 为什么需要它：本仓出过一个 P0——`setup.sh` 用 `--list ci:install` 判断「要不要
+// 安装这个插件」，而 `ciScope` 表达的是**CI job 参与范围**：绝大多数插件只声明
+// `build/test/package`，于是被整批跳过（6 个 required 插件）；同时
+// `remote-install.sh` 又完全不过滤。**同一份目录，两个消费者给出相反解释。**
+// 根因不是"某个脚本写错了选择器"，而是**字段语义没有定义处**——所以在这里定义。
+const NAMED_SELECTORS = {
+  // 需要在本地/服务器上被"准备"（安装依赖 + 按需构建）的组件。
+  // 驱动字段是 runtimeScope（"是否属于我们的运行时组合"），**不是** ciScope。
+  prepare: 'runtime:required',
+}
+
 function list(catalog, selector) {
-  const [kind, value] = selector.includes(':') ? selector.split(':', 2) : ['runtime', selector]
+  const resolved = NAMED_SELECTORS[selector] ?? selector
+  const [kind, value] = resolved.includes(':') ? resolved.split(':', 2) : [resolved, undefined]
+  if (!['ci', 'runtime', 'release'].includes(kind)) {
+    console.error(`✗ 未知选择器 ${selector}。具名：${Object.keys(NAMED_SELECTORS).join(' / ')}；或 ci:<scope> / release:<scope> / runtime:<required|excluded>`)
+    process.exit(1)
+  }
+  // 缺值必须**报错**，不能静默返回空集：`--list runtime` 曾因此悄悄不匹配任何
+  // 组件，而调用方把空集当成「没有需要处理的组件」——正是 fail-open 的形态。
+  if (!value) {
+    console.error(`✗ 选择器 ${selector} 缺少取值（如 runtime:required）。不支持"列出全部"——那会被误用成"全部都处理"。`)
+    process.exit(1)
+  }
   const hit = catalog.components.filter((c) => {
     if (kind === 'ci') return c.ciScope.includes(value)
     if (kind === 'runtime') return c.runtimeScope === value
-    if (kind === 'release') return c.releaseScope.includes(value)
-    console.error(`✗ 未知选择器 ${selector}（支持 ci:<scope> / release:<scope> / runtime）`)
-    process.exit(1)
+    return c.releaseScope.includes(value)
   })
   for (const c of hit) console.log(c.path)
 }
