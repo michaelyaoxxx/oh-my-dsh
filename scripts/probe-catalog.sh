@@ -549,12 +549,119 @@ assert_warn_case "E8 只跟踪元数据（package.json/cordis.patch.yml）⇒ �
 
 echo
 echo "== F. 消费者的 fail-open（目录查询失败必须 fail closed）=="
-# 这一组测的是**消费方**：`--list` 已经在 D6 里证明"非法目录 ⇒ 非零退出"，
-# 但消费方若把这个非零退出吞掉，D6 就白搭了——fail closed 是**两段**都要成立的事，
-# 缺任何一段，"配置错了还照跑"就还在。
+# 这一组测的是**消费方**：`--list` 已经在 D6 里证明"非法目录 ⇒ 非零退出"，但消费方若把
+# 这个非零退出丢掉，D6 就白搭了——fail closed 是**两段**都要成立的事，缺任何一段，
+# "配置错了还照跑"就还在。
 #
+# F2 起是**行为断言**（真跑一次消费者，断言它的**后果**），不是源码文本匹配。
+# 为什么必须换成行为：
+#   · 文本判据会**漏**——`done <<< "$(…)"` 去掉 `if !` 守卫同样是 fail-open（命令替换的
+#     退出码不进入 `done` 的状态），而源码里没有任何"吞错"字样；
+#   · 文本判据会**误伤**——注释里出现示例字符串也会命中。
+# 行为判据只有一句：**目录非法时，消费者必须非零退出、且一次挂载都不发生**，
+# 不管实现写成 `< <()`、`<<<` 还是 `| while`。
+#
+# 为什么行为断言到这里才可行（简报曾判定"必假绿"）：`link-plugins.sh` 在本仓会因为
+# harness 未构建而失败，夹具里必然缺 `$ROOT/harness/node_modules`——**但那是可以造的**。
+# 造出来脚本就能跑到底；挂载最终经 `dsh` → `pnpm` 发生，于是把一个**只记录调用**的
+# stub `pnpm` 放到 PATH 最前，"挂载调用次数"就成了可断言的**数据**（不是文案）。
+#
+# ⚠️ DSH_HOME 一律显式指向 $TMP 下的目录，且由**构造**保证：consumer_run 只接受一个
+#    标签、自己拼在 $CONSUMER_DSH_BASE 下，调用方拿不到传绝对路径的机会。脚本会往
+#    $DSH_HOME 写 pnpm 锚点、profile、cordis.patch.yml——传错就会改写开发者真仓的
+#    `.dsh/`（评审做同类夹具时就踩到过一次，已还原）。
+CONSUMER_DIR="$TMP/consumer"
+CONSUMER_STUB="$TMP/consumer-stub"
+CONSUMER_DSH_BASE="$TMP/consumer-dsh"
+export CONSUMER_PNPM_LOG="$TMP/.consumer-pnpm.log"
+mkdir -p "$CONSUMER_STUB"
+cat > "$CONSUMER_STUB/pnpm" <<'SH'
+#!/usr/bin/env bash
+# stub：只记录调用，不安装任何东西。CONSUMER_PNPM_LOG 缺失时**响亮失败**——静默退出 0
+# 会让"零挂载"变成假绿（反例会因"stub 根本没跑"而通过）。
+: "${CONSUMER_PNPM_LOG:?stub pnpm 缺少 CONSUMER_PNPM_LOG（夹具环境没传进来）}"
+printf '%s\n' "$*" >> "$CONSUMER_PNPM_LOG"
+exit 0
+SH
+chmod +x "$CONSUMER_STUB/pnpm"
+
+# 两个 catalog：broken 由 valid **改一处**派生（`["sbom"]` → `["bundle"]`，命中 C3
+# 不变量：不进运行时却进制品）。派生而非各写一份，是为了让"两模式只差一处"由构造保证。
+cat > "$TMP/catalog-valid.json" <<'JSON'
+{ "version": 2, "description": "consumer fixture (valid)",
+  "components": [
+    { "name": "bundle-a", "path": "plugins/bundle-a", "sourceAuthority": "github",
+      "pinPolicy": "tag", "pinRef": "v1", "ciScope": ["build"],
+      "releaseScope": ["bundle"], "runtimeScope": "required", "prepareMode": "source-build",
+      "platforms": [], "testProfile": "none", "stateSchema": "none", "license": "MIT" },
+    { "name": "dsh-tui", "path": "plugins/dsh-tui", "sourceAuthority": "github",
+      "pinPolicy": "tag", "pinRef": "v1", "ciScope": ["build"],
+      "releaseScope": ["sbom"], "runtimeScope": "excluded", "prepareMode": "none",
+      "platforms": [], "testProfile": "none", "stateSchema": "none", "license": "MIT" }
+  ] }
+JSON
+sed 's/\["sbom"\]/["bundle"]/' "$TMP/catalog-valid.json" > "$TMP/catalog-broken.json"
+
+make_consumer_fixture() { # $1=valid|broken
+  rm -rf "$CONSUMER_DIR"
+  mkdir -p "$CONSUMER_DIR/scripts" "$CONSUMER_DIR/config" \
+           "$CONSUMER_DIR/harness/node_modules" \
+           "$CONSUMER_DIR/plugins/bundle-a" "$CONSUMER_DIR/plugins/dsh-tui"
+  cp "$ROOT/scripts/check-components.mjs" "$CONSUMER_DIR/scripts/"
+  cp "$ROOT/scripts/merge-profile-patch.mjs" "$CONSUMER_DIR/scripts/"
+  cp "$ROOT/scripts/link-plugins.sh" "$CONSUMER_DIR/scripts/"   # 被测对象：逐字节复制
+  # 两个插件都声明 dsh.bundle.patch ⇒ 都**可挂载**。"零挂载"因此是有意义的断言：
+  # 排除集一旦变空，dsh-tui 就会真的被挂上——线上正是这个后果（web 环境被弄坏）。
+  for _p in bundle-a dsh-tui; do
+    # `scripts.build` 是**必需**的：bundle-a 是 prepareMode=source-build，会命中 T6 那条
+    # 「source-build ⇒ 须有 scripts.build」（materialized 阶段）。实测踩到过：不带它，
+    # **valid** 模式都会判红，F0b 当场变红——那正是 F0 这层自检存在的意义。
+    printf '{"name":"%s","scripts":{"build":"true"},"dsh":{"bundle":{"patch":"cordis.patch.yml"}}}\n' "$_p" \
+      > "$CONSUMER_DIR/plugins/$_p/package.json"
+    printf '[]\n' > "$CONSUMER_DIR/plugins/$_p/cordis.patch.yml"
+  done
+  printf '{"name":"harness","packageManager":"pnpm@11.7.0"}\n' > "$CONSUMER_DIR/harness/package.json"
+  # .gitmodules 两个模式**相同**（都与目录双向一致）：合法性差异全部落在 catalog 上。
+  # 于是正例与反例跑在同一棵树、同一个脚本、同一个 stub 下，唯一变量是目录合不合法。
+  printf '[submodule "plugins/bundle-a"]\n\tpath = plugins/bundle-a\n\turl = https://example.invalid/bundle-a.git\n[submodule "plugins/dsh-tui"]\n\tpath = plugins/dsh-tui\n\turl = https://example.invalid/dsh-tui.git\n' > "$CONSUMER_DIR/.gitmodules"
+  cp "$TMP/catalog-$1.json" "$CONSUMER_DIR/config/components.json"
+}
+
+CONSUMER_RC=0
+CONSUMER_CALLS=0
+consumer_run() { # $1=被测脚本（绝对路径）  $2=标签（在 $CONSUMER_DSH_BASE 下拼成 DSH_HOME）
+  local home="$CONSUMER_DSH_BASE/$2"
+  rm -rf "$home"
+  mkdir -p "$home/profiles/dsh"
+  printf '{"name":"dsh-profile","private":true,"dependencies":{}}\n' > "$home/profiles/dsh/package.json"
+  : > "$CONSUMER_PNPM_LOG"
+  CONSUMER_RC=0
+  ( cd "$CONSUMER_DIR" && DSH_HOME="$home" PATH="$CONSUMER_STUB:$PATH" bash "$1" ) \
+    >"$TMP/.consumer-out" 2>&1 || CONSUMER_RC=$?
+  CONSUMER_CALLS="$(wc -l < "$CONSUMER_PNPM_LOG" | tr -d ' ')"
+}
+consumer_refused_last() { [ "$CONSUMER_RC" -ne 0 ] && [ "$CONSUMER_CALLS" -eq 0 ]; }
+
+# ── F0：夹具自检（不通过则整组结论不可信）────────────────────────────────────
+# 同第 0 节的理由：夹具坏了会让**反例假过**（"目录非法"其实是"目录合法"）或**正例假红**。
+cat_d_n="$(diff "$TMP/catalog-valid.json" "$TMP/catalog-broken.json" | grep -c '^[<>]')"
+f0a_rc=0; [ "$cat_d_n" -eq 2 ] || f0a_rc=1
+assert_case "F0a 夹具自检：两模式只差 catalog 一处" "$f0a_rc" "catalog 差异 ${cat_d_n} 行（期望 2）"
+make_consumer_fixture valid
+f0b_rc=0
+(cd "$CONSUMER_DIR" && node scripts/check-components.mjs >/dev/null 2>&1) || f0b_rc=1
+assert_case "F0b 夹具自检：valid 模式目录校验通过" "$f0b_rc" "valid catalog 竟被拒——F3 的结论不可信"
+make_consumer_fixture broken
+cat_out="$(cd "$CONSUMER_DIR" && node scripts/check-components.mjs 2>&1)"; cat_rc_v=$?
+cat_n="$(printf '%s' "$cat_out" | grep -c '✗')"
+f0c_rc=0
+[ "$cat_rc_v" -ne 0 ] || f0c_rc=1
+[ "$cat_n" -eq 1 ] || f0c_rc=1
+assert_case "F0c 夹具自检：broken 模式恰好 1 条 ✗" "$f0c_rc" "rc=${cat_rc_v}、✗×${cat_n}（期望 rc≠0 且恰 1 条）"
+
+# ── F1：查询器（F2 的**前提**）──────────────────────────────────────────────
 # 造一个 catalog 非法、但子仓齐备的最小仓库：与主 fixture（$TMP）分开，因为要测的是
-# **消费者在另一个根目录下**的行为，而消费者的根由它自己的位置决定（$ROOT）。
+# **查询器自身**的契约，与任何消费者无关（消费者另有一棵功能完整的树，见上）。
 make_subrepo_broken() { # 造一个 catalog 非法、但子仓齐备的最小仓库
   mkdir -p "$TMP/broken/scripts" "$TMP/broken/config" "$TMP/broken/plugins/bad"
   cp "$ROOT/scripts/check-components.mjs" "$TMP/broken/scripts/"
@@ -571,11 +678,10 @@ JSON
 }
 make_subrepo_broken
 
-# F1 是 F2 的**前提**，不是 F2 的重复：消费者能 fail closed 的唯一依据，是它们
-# `$()` 捕获到的那条非零退出**真的存在**。若 `--list` 改成"打印错误但 rc=0、stdout 空"，
-# 消费者再怎么写都会拿到空集——那时该修的是查询器，而 F2 会**照样绿**（它只看源码文本）。
-# 判据取 rc + ✗ 的**条数**（不取文案，同 run_case：文案重构不该让用例假红），
-# 并确认恰好 1 条 ✗ —— 非零退出必须是**那条不变量**判的，不是崩了。
+# 消费者能 fail closed 的唯一依据，是它们 `$()` 捕获到的那条非零退出**真的存在**。若
+# `--list` 改成"打印错误但 rc=0、stdout 空"，消费者再怎么写都会拿到空集。
+# 判据取 rc + ✗ 的**条数**（不取文案，同 run_case），并确认恰好 1 条 ✗ ——非零退出必须
+# 是**那条不变量**判的，不是崩了。
 f1_out="$(cd "$TMP/broken" && node scripts/check-components.mjs --list runtime:excluded 2>&1)"; f1_rc=$?
 f1_n="$(printf '%s' "$f1_out" | grep -c '✗')"
 if [ "$f1_rc" -eq 0 ]; then
@@ -587,44 +693,130 @@ else
   printf '       理由(✗×%s): %s\n' "$f1_n" "$(printf '%s' "$f1_out" | grep -m1 '✗' | cut -c1-80)"
 fi
 
-# 断言：两个消费者不再吞掉目录查询的失败。
-# ⚠️ **这是静态检查，不是行为证明**——它挡不住 `2>/dev/null || :` 这类改写。
-#    原本想做成行为断言（拿非法目录跑一次消费者、断言非零退出），**但那是假绿**：
-#    link-plugins.sh 在 `$ROOT/harness/node_modules` 缺失时本来就会失败，
-#    夹具里必然缺这个目录 → 无论 fail-open 修没修，它都"非零退出"。
-#    真正的行为保证在真环境的 `make link-plugins`（真目录、已构建）。
-#
-# ⚠️ 判据**收窄到目录查询那一行**，不是文件级的裸串匹配。简报原形态是
-#    `grep -q '2>/dev/null || true' "$ROOT/$f"`，实测**恒红**：两个文件里各有别处
-#    也含这个串、却与目录查询无关，且都在本任务范围之外——
-#      link-plugins.sh:51 / remote-install.sh:251  `ANCHORED="$(… || true)"`（pnpm 锚点读取）
-#      remote-install.sh:79   `pnpm --version 2>/dev/null || true`（pnpm 解析探测）
-#      remote-install.sh:278  `command -v pnpm 2>/dev/null || true`（shim 定位）
-#    它们的失败方向也**相反**：读不到锚点 ⇒ 重写锚点，是安全方向，不是放行。
-#    恒红的用例不再区分"修好了"与"没修"，等于没有装置——正是它要防的形态。
-#    收窄后对**本 bug** 的覆盖**没有**降低：判的是「--list 调用行上有没有吞错」，
-#    连 `2>/dev/null || :`、`2>/dev/null; true` 这类改写也照样命中。
-#    第二个分支防**用例过时**：调用被删/改写成别的查询方式时，"没有吞错"就不是结论了。
+# ── F2：行为（反例）—— 目录非法 ⇒ 必须拒绝执行，且一次挂载都不发生 ──────────────
+# 断言取**后果**（退出码 + 挂载调用次数），不取文案。零挂载这一半才是要点：只在查询处
+# 报个错、却照样把 dsh-tui 挂进 profile，是**没有**修好（实测过这个形态）。
+make_consumer_fixture broken
+consumer_run "$CONSUMER_DIR/scripts/link-plugins.sh" broken
+f2_rc_v=$CONSUMER_RC; f2_n_v=$CONSUMER_CALLS
+consumer_refused_last; assert_case "F2 非法目录 ⇒ 拒绝执行且零挂载（行为）" $? "实测 rc=${f2_rc_v}、挂载 ${f2_n_v} 次——目录非法却照跑"
+printf '       实测: rc=%s、挂载调用=%s 次\n' "$f2_rc_v" "$f2_n_v"
+
+# ── F3：行为（正例）—— 目录合法 ⇒ 成功，且只挂非 excluded 的那个 ────────────────
+# F3 不是装饰：它证明**这棵树真的能跑到挂载那一步**。没有它，F2 的"零挂载"可能只是
+# "夹具根本跑不起来"（那正是简报判"行为断言必假绿"的形态）；有了它，F2 的非零退出与
+# 零挂载就只能是目录非法造成的。顺手把排除语义也钉住：excluded 的 dsh-tui 不得被挂。
+make_consumer_fixture valid
+consumer_run "$CONSUMER_DIR/scripts/link-plugins.sh" valid
+f3_rc_v=$CONSUMER_RC; f3_n_v=$CONSUMER_CALLS
+f3_log="$(cat "$CONSUMER_PNPM_LOG")"
+f3_bad=""
+[ "$f3_rc_v" -eq 0 ] || f3_bad="应成功，实测 rc=${f3_rc_v}"
+[ "$f3_n_v" -eq 1 ] || f3_bad="${f3_bad}；应恰好 1 次挂载，实测 ${f3_n_v} 次"
+printf '%s' "$f3_log" | grep -q 'plugins/bundle-a' || f3_bad="${f3_bad}；挂载调用里没有 bundle-a"
+printf '%s' "$f3_log" | grep -q 'plugins/dsh-tui' && f3_bad="${f3_bad}；excluded 的 dsh-tui 被挂载了"
+f3_rc=0; [ -z "$f3_bad" ] || f3_rc=1
+assert_case "F3 合法目录 ⇒ 成功且只挂 bundle-a（正例）" "$f3_rc" "$f3_bad"
+printf '       实测: rc=%s、挂载调用=%s 次\n' "$f3_rc_v" "$f3_n_v"
+
+# ── F4：装置自测 —— 三个真实的 fail-open 形态**必须都被判红** ───────────────────
+# 不带这条，F2 可能是个恒绿的摆设：判据写得再漂亮，只要它抓不住任何一种真形态，就没有
+# 兑现"防回退"的作用。故把本次任务里出现过的三种形态各注入一次，逐个跑，断言装置
+# 判它们"没拒绝"。锚点未命中（源文件改过）⇒ 本用例判红，绝不静默变成"变异已生效"。
+write_mutant_block() { # $1=形态名 → 写 $TMP/mut-<名>.txt
+  case "$1" in
+    no-guard)  # 保留 $() 与 herestring，只删掉 `if !` 守卫（两段式被"一行化"的常见产物）
+      cat > "$TMP/mut-no-guard.txt" <<'MUT'
+SKIP_MOUNT=()
+while IFS= read -r _p; do
+  [ -n "$_p" ] && SKIP_MOUNT+=("$_p")
+done <<< "$(node "$ROOT/scripts/check-components.mjs" --list runtime:excluded)"
+MUT
+      ;;
+    swallow)   # 原形态：连 stderr 带退出码一起吞
+      cat > "$TMP/mut-swallow.txt" <<'MUT'
+SKIP_MOUNT=()
+while IFS= read -r _p; do
+  [ -n "$_p" ] && SKIP_MOUNT+=("$_p")
+done < <(node "$ROOT/scripts/check-components.mjs" --list runtime:excluded 2>/dev/null || true)
+MUT
+      ;;
+    naked)     # "只删掉 || true"：错误不静默了，但退出码照样进不了 done 的状态
+      cat > "$TMP/mut-naked.txt" <<'MUT'
+SKIP_MOUNT=()
+while IFS= read -r _p; do
+  [ -n "$_p" ] && SKIP_MOUNT+=("$_p")
+done < <(node "$ROOT/scripts/check-components.mjs" --list runtime:excluded)
+MUT
+      ;;
+  esac
+}
+make_consumer_mutant() { # $1=目标文件  $2=形态名；锚点必须命中
+  cat > "$TMP/.mut-old.txt" <<'OLD'
+if ! _excluded="$(node "$ROOT/scripts/check-components.mjs" --list runtime:excluded)"; then
+  echo "错误: 组件目录查询失败（原因见上）。link-plugins 拒绝在未知的排除集上继续。" >&2
+  exit 1
+fi
+SKIP_MOUNT=()
+while IFS= read -r _p; do
+  [ -n "$_p" ] && SKIP_MOUNT+=("$_p")
+done <<< "$_excluded"
+OLD
+  write_mutant_block "$2"
+  node -e '
+    const fs = require("fs")
+    const [src, dst, oldF, newF] = process.argv.slice(1)
+    const t = fs.readFileSync(src, "utf8"), o = fs.readFileSync(oldF, "utf8")
+    if (!t.includes(o)) { console.error("锚点未命中（被测脚本已改过？）"); process.exit(1) }
+    fs.writeFileSync(dst, t.replace(o, fs.readFileSync(newF, "utf8")))
+  ' "$CONSUMER_DIR/scripts/link-plugins.sh" "$1" "$TMP/.mut-old.txt" "$TMP/mut-$2.txt" 2>"$TMP/.mut-err"
+}
+
+for _m in no-guard swallow naked; do
+  make_consumer_fixture broken
+  if ! make_consumer_mutant "$CONSUMER_DIR/scripts/link-plugins.$_m.sh" "$_m"; then
+    assert_case "F4 变异 $_m 必须生效" 1 "变异注入失败（$(head -1 "$TMP/.mut-err")）——本组自测不可信"
+    continue
+  fi
+  consumer_run "$CONSUMER_DIR/scripts/link-plugins.$_m.sh" "mut-$_m"
+  # `!` 在这里**是判据本身**（同 D2）：装置必须把这个形态判成"没拒绝"。判成"拒绝"就说明
+  # F2 是恒绿的摆设——那正是本组存在的理由。
+  ! consumer_refused_last; mut_rc=$?
+  assert_case "F4 变异 $_m 形态必须被判红" "$mut_rc" "装置没抓住（rc=${CONSUMER_RC}、挂载 ${CONSUMER_CALLS} 次）"
+  printf '       该形态实测: rc=%s、挂载调用=%s 次（装置判红 ⇒ 二者至少一项非"拒绝"）\n' "$CONSUMER_RC" "$CONSUMER_CALLS"
+done
+
+# ── F5：静态补充（**不是**唯一判据）──────────────────────────────────────────
+# F2 已经从**行为**上覆盖了本组要防的东西；这条留着只因它能更早、更精确地指出"问题在
+# 查询那一行"，而不必去读运行输出。
+# ⚠️ 它是静态检查：挡不住 `2>/dev/null || :` 这类改写，也**只会多报不会漏报**——理论上
+#    存在别的机制把退出码补回来的写法会被它误判红。故它**不能**单独当门禁判据。
+# ⚠️ 判据只作用于**目录查询那一行**，不是文件级裸串匹配：两个文件里各有别处也含
+#    `2>/dev/null || true`，却与目录查询无关、失败方向相反（读不到锚点 ⇒ 重写锚点，是
+#    安全方向），且不在本任务范围内。按名称找是这几处（**刻意不写行号**——上一版写死的
+#    行号在本任务落地后全部失效，按图索骥会落到无关行上）：
+#      · link-plugins.sh / remote-install.sh 的 pnpm 版本锚点读取（ANCHORED=…）
+#      · remote-install.sh 的 pnpm 解析探测（pnpm --version）与 shim 定位（command -v pnpm）
+#    恒红的用例不区分"修好了"与"没修"，等于没有装置。
 for f in scripts/link-plugins.sh deploy/remote-install.sh; do
   # 只认**调用行**：文件里的注释也提到过 `--list runtime:excluded`，但它不含脚本名，
   # 故用 `check-components.mjs … --list runtime:excluded` 作判据，注释不会误命中。
-  f2_call="$(grep -E 'check-components\.mjs.*--list runtime:excluded' "$ROOT/$f" 2>/dev/null)"
-  f2_bad=""
-  if [ -z "$f2_call" ]; then
-    f2_bad="文件里找不到该目录查询调用（用例过时，须复核）"
-  elif printf '%s\n' "$f2_call" | grep -q '2>/dev/null'; then
-    f2_bad="目录查询行仍吞错：$(printf '%s' "$f2_call" | tr -s ' ' | cut -c1-60)"
-  # 第二条判据：查询**仍走进程替换**。它不是"更严"而是**同一个 bug 的另一半**——
-  # `< <(cmd)` 拿不到 cmd 的退出码（已实测），所以哪怕不吞 stderr，"只删 `|| true`"
-  # 也照样带着空排除集跑到挂载那一步（非法目录下 dsh-tui 真的被挂进 profile dsh）。
-  # 判据不会误伤：这个查询的退出码**只能**经 `$()` 拿到，任何 `< <(该调用)` 必为 fail-open。
-  elif printf '%s\n' "$f2_call" | grep -qE '<[[:space:]]*<\('; then
-    f2_bad="目录查询仍走进程替换（退出码被丢弃，等同 fail open）：$(printf '%s' "$f2_call" | tr -s ' ' | cut -c1-60)"
+  f5_call="$(grep -E 'check-components\.mjs.*--list runtime:excluded' "$ROOT/$f" 2>/dev/null)"
+  f5_bad=""
+  if [ -z "$f5_call" ]; then
+    f5_bad="文件里找不到该目录查询调用（用例过时，须复核）"
+  elif printf '%s\n' "$f5_call" | grep -q '2>/dev/null'; then
+    f5_bad="目录查询行仍吞错：$(printf '%s' "$f5_call" | tr -s ' ' | cut -c1-60)"
+  # 第二条判据：查询走进程替换。**没有已知的** `< <(…)` 写法能拿到该命令的退出码
+  # （`< <(cmd; echo $? > f)` 这类把 rc 写进文件的写法能拿到值，但它**仍会被本条判红**：
+  # 判据只会**多报**、不会漏报，方向安全）。
+  elif printf '%s\n' "$f5_call" | grep -qE '<[[:space:]]*<\('; then
+    f5_bad="目录查询仍走进程替换（退出码被丢弃，等同 fail open）：$(printf '%s' "$f5_call" | tr -s ' ' | cut -c1-60)"
   fi
-  if [ -n "$f2_bad" ]; then
-    printf '  %-44s %s\n' "F2 $f 目录查询不得吞错（静态检查）" "!! $f2_bad"; FAILED=$((FAILED + 1))
+  if [ -n "$f5_bad" ]; then
+    printf '  %-44s %s\n' "F5 $f 目录查询行形态（静态补充）" "!! $f5_bad"; FAILED=$((FAILED + 1))
   else
-    printf '  %-44s %s\n' "F2 $f 目录查询不得吞错（静态检查）" "ok"
+    printf '  %-44s %s\n' "F5 $f 目录查询行形态（静态补充）" "ok"
   fi
 done
 
