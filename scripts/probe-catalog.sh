@@ -182,15 +182,22 @@ write_catalog "[$(good_component ok plugins/ok)]" 2
 write_gitmodules "plugins/ok"
 VALIDATOR="$TMP/scripts/check-components.mjs"
 sed "s/^  license: 'operational',$/  license: 'operationall',/" "$VALIDATOR" > "$VALIDATOR.mut"
-if grep -q "'operationall'" "$VALIDATOR.mut"; then
-  mv "$VALIDATOR.mut" "$VALIDATOR"
-else
+# 变异是否生效，**只能**由「变异体与源文件有没有实差」判定。
+# ⚠️ 别用 `grep -q "'operationall'" 副本` 来判：那根针就写在**被测文件自己的注释里**
+#    （check-components.mjs 解释本用例时写着 'operationall'），于是 grep **恒真**、
+#    else 分支**永不可达**——守卫写了却不真的守，正是 T1 花 5 轮评审治的同一形态；
+#    且锚点漂移时只会泛泛报「期望与实测不符」，把读者引向"规则没了"这个错误方向。
+if cmp -s "$ROOT/scripts/check-components.mjs" "$VALIDATOR.mut"; then
   rm -f "$VALIDATOR.mut"
-  record_construct_error "B5 变异未生效：没能在校验器副本里改出 'operationall'（锚点已漂移？本用例结果不可信）"
+  record_construct_error "B5 变异未生效：副本与源文件逐字节相同（锚点已漂移？本用例结果不可信）"
+else
+  mv "$VALIDATOR.mut" "$VALIDATOR"
 fi
 run_case "B5 FIELD_CLASS 值拼错（须拒）"    CAUGHT
 # 还原副本：后面的用例必须跑在**未变异**的校验器上（否则它们会因 B5 的变异而假红）。
-cp "$ROOT/scripts/check-components.mjs" "$VALIDATOR"
+# 还原失败也走构造失败通道，由 B5b 哨兵认领并报出——不让它静默泄漏。
+cp "$ROOT/scripts/check-components.mjs" "$VALIDATOR" \
+  || record_construct_error "B5 还原失败：副本可能仍是变异体，后续用例结果不可信"
 # B5b 是**还原哨兵**：B5 把校验器副本变异过，若还原失败，本用例会立刻变红
 # （干净 catalog 被变异体拒掉）。别删——今天 B5 之后没有别的用例，删了它
 # 从现在到 T4 加用例之间的这段时间里，变异泄漏不会有任何信号。
