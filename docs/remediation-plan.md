@@ -209,7 +209,7 @@ B 只在某个具体状态被证明有真实迁移需求时才做。
 **提交范围**：`bd7d265..`（49 个提交，ADR 起算）。
 
 > ⚠️ **本节 T 编号与上方总表的 T 编号不是同一套。** 总表的 T0a-T9 来自 2026-09-14 review
-> 的第二轮整改清单；本节的 T1-T11 是**组件目录这一轮自己的任务切分**。
+> 的第二轮整改清单；本节的 T1-T12 是**组件目录这一轮自己的任务切分**。
 > 两者只是恰好都用了 "T"——**不要交叉引用**。
 
 ### 逐项结果（以实现后的实测为准，不照抄计划）
@@ -267,6 +267,106 @@ B 只在某个具体状态被证明有真实迁移需求时才做。
 
 教训：**写进长期文档的应该是判据（那棵树没有 git 元数据 ⇒ 该阶段不可判定），
 而不是某次运行的数字。** 数字要连同命令一起写，好让下一个人**重跑**而不是**照抄**。
+
+### T12 · 双平台验证 {#t12}
+
+**为什么单独一个任务**：`prepareMode` 的行为变更**真实改变构建**——`dsh-agent-teams` 开始构建、
+`dsh-at-file` 停止构建。而本仓硬约束是「**原生依赖必须按平台各自构建**」（macOS arm64 与
+Linux x86-64 的构建路径不同）。**只在一个平台验证等于没验证。**
+
+| 平台 | 状态 | 说明 |
+| --- | --- | --- |
+| **macOS arm64**（本机） | ✅ **已验证** | 见下「macOS 实测」 |
+| **Linux x86-64**（部署目标） | ❌ **未验证** | 见下「为什么未验证」 |
+
+平台实测环境（macOS 侧）：Darwin 25.5.0 arm64 / node v24.3.0 / GNU bash 3.2.57(1)-release。
+
+#### macOS arm64：已验证（2026-09-15 本任务实测，非照抄计划）
+
+```bash
+node scripts/check-components.mjs --require-materialized   # rc=0
+node scripts/check-components.mjs --plan prepare           # rc=0，10 行
+```
+
+`--plan prepare` 实测输出（10 行，`<path>\t<prepareMode>`）：
+
+```text
+harness	source-build
+plugins/dsh-web	source-build
+plugins/dsh-better-sidebar	source-build
+plugins/modlens	source-build
+plugins/dsh-automation	tracked-prebuilt
+plugins/dsh-market	source-build
+plugins/dsh-agent-teams	source-build
+plugins/dsh-at-file	tracked-prebuilt
+plugins/modsearch	source-build
+plugins/loongsuite-observability	source-build
+```
+
+计划里点名的两行都在：`plugins/dsh-agent-teams	source-build`（**开始**构建）与
+`plugins/dsh-at-file	tracked-prebuilt`（**停止**构建）。`dsh-tui` 不在计划里（`prepareMode: none`）。
+**连跑两次逐字节一致**（`diff` 无输出）——同一份目录 → 同一份计划。
+
+`--require-materialized` 实测 `rc=0`，输出 `10 个已验；0 个跳过`（11 个组件减去
+`runtimeScope=excluded` 的 `dsh-tui`），并输出**恰好三条警告**：`modlens` / `dsh-market` / `modsearch`。
+
+> ⚠️ **这三条警告是预期的，不是缺陷。** ADR-0005 把「构建可能弄脏 submodule」定为
+> **只警告不阻断**（本仓可以出于供应链政策选择源码重建，即使子仓恰好也提交了产物）。
+> 判据是**构建产物**入口（`BUILDABLE_ENTRY`）而**不是**全入口集。本任务**独立复核**了这一点
+> （自写脚本按同一判据重数，不读校验器的输出）：按全入口集判会喊 **6** 个——多出的
+> `dsh-better-sidebar` / `dsh-agent-teams` / `loongsuite-observability` 三个，其"命中"只是
+> `package.json` / `cordis.patch.yml` 这类**构建从不写**的 manifest；按构建产物判**恰好 3 个**。
+> **数字与实现一致。**
+
+#### Linux x86-64：未验证，以及为什么
+
+**未验证——不是"按设计应该没问题"。** 缺的**不是手段，是授权**：
+
+在远端主机上写文件（哪怕只是临时目录）属 [AGENTS.md](../AGENTS.md)「操作授权边界」里
+**必须由用户显式授权**的动作。控制器已在等用户确认目标机，**拿到确认前不连任何远端**。
+
+（本机也不能旁路验证：无 docker/podman/lima，且 macOS 上**没有 `gsed`**——
+`which gsed` 无命中，故 GNU sed 的行为在本机**无法**验证。）
+
+**待授权后一次跑完的确切命令**（⚠️ 真实主机名不得入库，用 `<host>` 占位）：
+
+```bash
+ssh <host> 'bash -s' <<'EOF'
+set -eu
+cd ~/dsh   # 或该机上的仓库路径
+node scripts/check-components.mjs --plan prepare
+EOF
+```
+
+**验收判据**：输出必须与上面 macOS 的 **10 行逐行一致**（同一份 `config/components.json`
+→ 同一份计划）。这正是 09-15 review **P0-1**「同一份 manifest 两个消费者相反解释」的
+**收口验收**——若两个平台给出不同计划，说明「决策来自目录」这件事**还没真正做到**。
+
+> 若该机**没有仓库副本**：本步无需完整仓库——把 `config/components.json` 与
+> `scripts/check-components.mjs` **两个文件**拷到该机临时目录，跑
+> `node check-components.mjs --plan prepare` 即可。**查询器零依赖**（不读子仓、不联网、不装包），
+> 这也是这一条**不需要**建环境就能验的原因。
+
+#### 同批登记的两条（都与 T12 相关）
+
+| # | 事项 | 现状 | 下一步 |
+| --- | --- | --- | --- |
+| **①** | **`probe-catalog.sh` 的 sed 写法在 GNU sed 下的行为** | **按分析无方言问题——但那是推断，不是验证**。实测：`scripts/probe-catalog.sh` 只有两处 `sed`（`:299`、`:676`），**均为 POSIX BRE**（无 `-E` / `-r`，只用 `^` `$` 锚点 + 字面量 + `/` 分隔符，**一个 GNU 扩展都没用**：无 `\+`、`\?`、`\|`、`\b`、`\w`、`\s`，替换串里无 `&`、无反斜杠）；且**全仓 `scripts/` 与 `deploy/` 无任何 `sed -i`**（`grep -rn "sed -i" scripts/ deploy/` 零命中）——而 `-i` 正是 BSD/GNU 的**唯一分歧点**，脚本刻意改为 `> "$VALIDATOR.mut"` 再 `mv` 绕开 | 在 Linux 上跑一次 `bash scripts/probe-catalog.sh` 即可**彻底关闭**（B5 会**真正执行变异**，比空跑一次 sed 更有说服力）。已列入 T12 待授权清单 |
+| **②** | **`check-pins.sh` 无重试** | 每处 `git -C "$sub" fetch origin …`（`scripts/check-pins.sh:73`、`:93`）都是**一次性**尝试，失败即 `exit 1` ⇒ **11 条 pin 任一抖一下就整项失败**（实测 `bash scripts/check-pins.sh --list` → **tag 9 条 / branch 2 条 = 11 行**）。已实测多次：失败组件**每次游走**（同一时段裸 `fetch` 成功而 `check-pins.sh` 偶发失败）⇒ 定性为**环境抖动**，不是代码缺陷 | 加有限次重试（退避）。**记入 [backlog.md](backlog.md) 候选，不在本计划范围** |
+
+> ⚠️ **①的两处 `sed` 与 `-i` 的零命中是本任务实测**（`grep -n` 的原始输出），
+> 但「GNU sed 下等价」这一步**只能由 Linux 上的实跑给出**——本机没有 `gsed`，
+> 装软件不在授权内。**别把"分析过"读成"验过"。**
+>
+> ⚠️ **②里"抖动"与"真实的 pin 不一致"当前在退出码上不可分辨**（两者都是 `1`，
+> 只有 stderr 文案不同）。要的是把两者区分开，而不只是"让失败的能重试"。
+
+**附带发现（本任务读文档时看到，未改）：** `config/README.md` 的「一条只报警告、不阻断的」
+一节（materialized 阶段不变量）写作「（**10 个**组件里触发 6 个）」，而
+`scripts/check-components.mjs:221` 的同一句注释写作「**11 个**组件里 6 个喊」。
+本任务独立复核的实测值是：**11 个组件中 8 个是 `source-build`**，按全入口集判会喊 **6** 个、
+按构建产物判喊 **3** 个 ⇒ **README 的"10 个"是过期数字**（应为 11）。
+该处不是「实现状态」表，不在本轮 T12 的改动范围内，**留待下次同步**。
 
 ---
 
