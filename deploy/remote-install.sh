@@ -35,6 +35,17 @@ fi
 export DSH_HOME="$ROOT/.dsh"
 PROFILE=dsh
 
+# ---------- 0b. node 可用性：必须先于一切 node 调用 ----------
+# 下面的组件目录查询（--list runtime:excluded）、第 3 节的 --plan prepare 都要 node。
+# 若这条判定留在它们之后（曾经如此：node 检查在第 1 节、目录查询在其前），服务器上没装
+# node 时操作者看到的是较泛的「组件目录查询失败」，而「未找到 node。需要 Node.js ^22.19
+# || >=24」这句**可操作的**提示不会出现——仍 fail closed，掉的是诊断质量。
+if ! command -v node >/dev/null 2>&1; then
+  echo "错误: 未找到 node。需要 Node.js ^22.19 || >=24（见 harness/package.json engines）。" >&2
+  exit 1
+fi
+node -e 'const s=process.versions.node.split(".").map(Number);const ok=(s[0]===22&&s[1]>=19)||s[0]>=24;if(!ok){console.error("错误: Node 版本不满足 ^22.19 || >=24（harness engines），当前 "+process.versions.node);process.exit(1)}'
+
 # 不挂进本 profile 的包：dsh-tui 是**终端前端**（与 dsh-web-app 同级，cordis.patch.yml
 # 覆盖 30 个 base 行），它同样声明了 dsh.bundle.patch，不排除会被下面的候选收集捞进来
 # 挂到 profile dsh、把 web 环境弄坏。它跑在独立 profile，见 scripts/link-tui.sh。
@@ -57,13 +68,7 @@ done <<< "$_excluded"
 cd "$ROOT"
 [ -f harness/package.json ] || { echo "错误: 未找到 harness/package.json（rsync 内容不完整？）。" >&2; exit 1; }
 
-# ---------- 1. 工具链前置校验（与 scripts/setup.sh 一致） ----------
-if ! command -v node >/dev/null 2>&1; then
-  echo "错误: 未找到 node。需要 Node.js ^22.19 || >=24（见 harness/package.json engines）。" >&2
-  exit 1
-fi
-node -e 'const s=process.versions.node.split(".").map(Number);const ok=(s[0]===22&&s[1]>=19)||s[0]>=24;if(!ok){console.error("错误: Node 版本不满足 ^22.19 || >=24（harness engines），当前 "+process.versions.node);process.exit(1)}'
-
+# ---------- 1. 其余工具链前置校验（与 scripts/setup.sh 一致；node 存在性与版本见 0b） ----------
 if ! command -v corepack >/dev/null 2>&1; then
   echo "错误: 未找到 corepack。Node >=25 已不再随发行版分发 corepack，可执行 npm install -g corepack 安装；Node <25 请安装/启用 Node.js ^22.19 || >=24 后重试。" >&2
   exit 1
@@ -124,18 +129,20 @@ fi
 
 mkdir -p plugins "$DSH_HOME/profiles"
 
-# ---------- 3. harness：安装依赖 + 构建（服务器平台，frozen-lockfile） ----------
-# CI=true 原因与 scripts/setup.sh 相同：harness 作为 submodule 时其 postinstall
-# （lefthook 安装）会因公共 config 的 core.worktree 拒绝迁移而让 install 失败；
-# 按其自带开关 CI=true 跳过 hooks 安装。build 内部嵌套的 pnpm install 同样需要
-# 继承 CI=true（export 到整个 harness 步骤），否则嵌套 install 会再次触发该失败。
-echo "==> 构建 harness"
-( cd harness && export CI=true && pnpm install --frozen-lockfile && pnpm build )
-
-# ---------- 4. 各插件：安装依赖 + 构建（服务器平台产物） ----------
-# 服务器侧硬性要求可复现安装：pnpm-lock.yaml 走 --frozen-lockfile，package-lock.json
-# 走 npm ci；两者都没有则直接失败（不静默降级为 unfrozen install）。此处有意比
-# scripts/setup.sh 更严格——本地开发允许无 lock 的插件跑普通 install。
+# ---------- 3. harness 与各插件：安装依赖 + 构建（经共用 executor） ----------
+# harness **不再有独立步骤**：它是 `--plan prepare` 的第 1 行（runtimeScope=required、
+# prepareMode=source-build），与插件同走一条路：scripts/prepare-executor.sh 准备**一次**。
+# 它需要的 CI=true 不是"多一个步骤"，而是一条**环境策略**——住在下面的钩子里（完整缘由见彼处）。
+# （此前这里是独立的 `( cd harness && export CI=true && pnpm install --frozen-lockfile
+#   && pnpm build )` 加一个插件循环：两处各自决定"怎么准备"，正是 09-15 review P0-1 要治的病。）
+#
+# 与 scripts/setup.sh **同一个具名选择器**（`prepare` = runtimeScope:required，
+# 语义定义在 check-components.mjs 的 NAMED_SELECTORS）与**同一个 executor**：同一份组件目录，
+# 本地与服务器必须得出**同样的**「准备哪些组件、怎么准备」计划。差异只在 install 策略钩子
+# （服务器硬性要求可复现安装，见 pe_install）。
+# ⚠️ 此前这里**完全不过滤**，会安装并构建 dsh-tui（runtimeScope=excluded、no-build），
+# 与 setup.sh 的过滤逻辑互相矛盾——同一份 manifest 两个消费者给出相反解释。
+# 见 docs/reviews/2026-09-15-incremental-design-review.md P0-1。
 # 无 packageManager 的插件仓（如 modlens、dsh-market）corepack 在仓内回落 latest 不可靠；
 # 经 harness 目录解析 harness pin 的 pnpm（服务器上 corepack 同样按 harness packageManager
 # 解析），--dir 让命令仍在插件仓内执行。install 与 build 同此路径——按调用点各写一遍判定
@@ -197,61 +204,101 @@ plugin_install() { # $1=目录 $2=安装子命令（pnpm 用 install，npm 用 c
   git -C "$d" ls-files --error-unmatch pnpm-workspace.yaml >/dev/null 2>&1 && scaffold_tracked=1
   errfile="$(mktemp)"
   # ERR_PNPM_IGNORED_BUILDS 打在 stdout 上（stderr 为空），必须合并两流才抓得到。
-  if plugin_run "$d" "$cmd" "$@" >"$errfile" 2>&1; then
+  # ⚠️ 退出码必须从**那次命令**上取。写成 `if cmd; then … fi` 再 `ret=$?` 是错的：
+  # if 语句在条件为假且无 else 时退出码是 **0**，于是安装失败被当成成功返回 0
+  # （fail-open，实测过）——executor 的 `pe_install … || return 1` 会因此形同虚设。
+  ret=0
+  plugin_run "$d" "$cmd" "$@" >"$errfile" 2>&1 || ret=$?
+  if [ "$ret" -eq 0 ]; then
     rm -f "$errfile"
     return 0
   fi
-  ret=$?
   if ! grep -q "ERR_PNPM_IGNORED_BUILDS" "$errfile"; then
     rm -f "$errfile"
     return "$ret"
   fi
   rm -f "$errfile"
   echo "==> ${d%/} 声明了构建策略但仍被 pnpm 拦截，以 --ignore-scripts 重试"
-  plugin_run "$d" "$cmd" "$@" --ignore-scripts
+  # 重试的退出码同样要**显式**返回：函数末尾那条 `if` 语句会把状态盖成 0。
+  ret=0
+  plugin_run "$d" "$cmd" "$@" --ignore-scripts || ret=$?
   if [ "$scaffold_was" -eq 0 ] && [ "$scaffold_tracked" -eq 0 ] && [ -e "$d/pnpm-workspace.yaml" ]; then
     rm -f "$d/pnpm-workspace.yaml"
   fi
+  return "$ret"
 }
 
-# 与 scripts/setup.sh **同一个具名选择器**（`prepare` = runtimeScope:required，
-# 语义定义在 check-components.mjs 的 NAMED_SELECTORS）：同一份组件目录，本地与
-# 服务器必须得出**同样的「准备哪些组件」计划**。
-# ⚠️ 此前这里**完全不过滤**，会安装并构建 dsh-tui（runtimeScope=excluded、no-build），
-# 与 setup.sh 的过滤逻辑互相矛盾——同一份 manifest 两个消费者给出相反解释。
-# 见 docs/reviews/2026-09-15-incremental-design-review.md P0-1。
-PREPARE_LIST="$(node "$ROOT/scripts/check-components.mjs" --list prepare)"
-for d in plugins/*/; do
-  [ -f "$d/package.json" ] || continue
-  rel="${d%/}"
-  if ! printf '%s\n' "$PREPARE_LIST" | grep -qx "$rel"; then
-    echo "==> 跳过安装/构建: ${rel}（runtimeScope 不是 required）"
-    continue
+# ── 显式前置校验（与 scripts/setup.sh 对称）─────────────────────────────────────
+# 目录与 .gitmodules 不一致、或字段取值非法时**立即失败**：否则 PREPARE_PLAN 为空 →
+# 每个组件走「跳过」→ 部署"成功"却没装任何东西（fail-open）。
+# **不依赖** `set -e` 对 `PREPARE_PLAN="$(…)"` 的传播语义——那条链只在命令失败返回非 0
+# 时才成立（见 check-components.mjs 里 wantsQuery 守卫那段注释）。
+#
+# ⚠️ 口径**有意**只到 catalog 阶段（= `--plan` 查询路径自带的 validateCatalog），
+#    不跑 validate() 的 materialized / license 阶段：服务器侧的树**没有 git 元数据**
+#    （scripts/deploy-remote.sh 的 rsync 带 `--exclude '.git'`），而 materialized 阶段会对
+#    tracked-prebuilt 组件（dsh-automation、dsh-at-file）跑 `git -C <dir> ls-files` 判入口
+#    跟踪状态——在没有 .git 的树上一律失败，于是**每一次部署都会死在这一步**。
+#    那两个不变量问的是「fresh clone 上组件还能用吗」，只有带 git 的 checkout 能回答，
+#    服务器树答不了；catalog 阶段不读子仓，正是这里该用的口径。
+#    （实测：服务器树模拟下 validate() rc=1、`--plan` rc=0，见 task-9-report.md。）
+if ! PREPARE_PLAN="$(node "$ROOT/scripts/check-components.mjs" --plan prepare)"; then
+  echo "错误: 组件目录校验失败（见上）。请先修正 config/components.json 与 .gitmodules 的一致性。" >&2
+  exit 1
+fi
+
+# ── 环境策略钩子（服务器）───────────────────────────────────────────────────
+# 与 scripts/setup.sh 同一套钩子，**唯一**差异在安装策略：服务器侧硬性要求可复现安装
+# （pnpm-lock.yaml 走 --frozen-lockfile，package-lock.json 走 npm ci；两者都没有则直接
+# 失败，不静默降级为非冻结安装）。此处有意比 scripts/setup.sh 更严格——本地开发允许无
+# lock 的插件跑普通 install。
+#
+# ⚠️ **为什么 harness 要 CI=true（别把这两个 export 当多余的删掉）**
+# harness 根 postinstall（scripts/install-lefthook.mjs）要在 git 公共 config 上启用
+# extensions.worktreeConfig 并安装 lefthook hooks；但 harness 作为 submodule 时
+# core.worktree 位于公共 config（.git/modules/harness/config），该脚本会拒绝迁移并让
+# install 失败。submodule 的 hooks 本就不参与主仓提交，故按其自带开关 CI=true 跳过
+# hooks 安装。注意 build（内部嵌套的 pnpm 调用会做 deps 校验并自动补跑 pnpm install）
+# 必须让**整个** harness 准备过程都继承 CI=true，否则嵌套 install 会再次触发该失败
+# （install 与 build 两个钩子都要设，缺一不可）。
+#
+# ⇒ 这是**环境策略**，所以它住在钩子里、而不是"给 harness 单开一个准备步骤"（那样又会有
+#    两处各自决定怎么准备）。**只对 harness 设**：CI 会改变一大批 npm/pnpm 生命周期脚本的
+#    语义，外泄到别的组件是未经验证的行为变更——故用 `local` + `export` 把作用域钉在本函数内
+#    （实测：函数内子进程可见 CI=true，函数返回后恢复原状/未设）。
+pe_install() { # $1=rel  $2=frozen|nonfrozen
+  local rel="$1" d="$1/"
+  if [ "$rel" = "harness" ]; then
+    local CI=true
+    export CI
   fi
-  echo "==> 安装插件依赖: $d"
-  if [ -f "$d/pnpm-lock.yaml" ]; then
+  if [ -f "${d}pnpm-lock.yaml" ]; then
     plugin_install "$d" install --frozen-lockfile
   elif has_npm_lock "$d"; then
-    echo "==> ${d%/} 使用 npm（package-lock.json，可复现安装）"
+    echo "==> ${rel} 使用 npm（package-lock.json，可复现安装）"
     plugin_install "$d" ci
   else
-    echo "错误: 插件 ${d%/} 既无 pnpm-lock.yaml 也无 package-lock.json，服务器侧构建要求可复现安装（--frozen-lockfile / npm ci）。请在插件仓提交 lockfile 后重试。" >&2
-    exit 1
+    echo "错误: 组件 ${rel} 既无 pnpm-lock.yaml 也无 package-lock.json，服务器侧构建要求可复现安装（--frozen-lockfile / npm ci）。请在插件仓提交 lockfile 后重试。" >&2
+    return 1
   fi
-  # 入口文件已提交在仓库内的插件自带构建产物（pin 的一部分）→ 跳过 build：本地重建会因
-  # 绝对路径哈希（如 CSS module 类名）产生与 pin 不同的产物，弄脏 submodule。源码形态的单包
-  # 仓（入口未提交，如 dsh-better-sidebar）与 workspace 根（无 main，如 dsh-web）需要构建。
-  main_entry="$(node -e 'const fs=require("fs");process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).main||"")' "$d/package.json")"
-  if [ -n "$main_entry" ] && git -C "$d" ls-files --error-unmatch "${main_entry#./}" >/dev/null 2>&1; then
-    echo "==> 跳过构建: ${d%/} 入口 ${main_entry} 已提交在仓库内"
-  elif node -e 'const fs=require("fs");process.exit(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).scripts?.build?0:1)' "$d/package.json" 2>/dev/null; then
-    echo "==> 构建插件: $d"
-    # run build 而非裸 build：npm 只认 run，pnpm 两者等价
-    plugin_run "$d" run build
+}
+pe_run_build() { # $1=rel（CI=true 同上：build 内部的 deps 校验会补跑 pnpm install）
+  if [ "$1" = "harness" ]; then
+    local CI=true
+    export CI
   fi
-done
+  plugin_run "$1/" run build
+}
 
-# ---------- 5. pnpm 版本锚点（与 scripts/link-plugins.sh 机制一致） ----------
+# shellcheck source=scripts/prepare-executor.sh
+. "$ROOT/scripts/prepare-executor.sh"
+
+while IFS=$'\t' read -r rel mode; do
+  [ -n "$rel" ] || continue
+  prepare_component "$rel" "$mode" frozen || exit 1
+done <<< "$PREPARE_PLAN"
+
+# ---------- 4. pnpm 版本锚点（与 scripts/link-plugins.sh 机制一致） ----------
 # dsh plugin 会在 profile 目录里 spawn pnpm，corepack 从该目录向上找 packageManager；
 # $DEPLOY_DIR 根没有 package.json，corepack 会回落 latest。在 $DSH_HOME 放一个只含
 # packageManager 的 package.json 作锚点，钉住 harness 使用的 pnpm 版本，并禁止回落。
@@ -280,7 +327,7 @@ dsh() {
   ( cd "$ROOT/harness" && CI=true pnpm dsh "$@" )
 }
 
-# ---------- 6. 服务入口 shim（供 deploy/dsh.service 使用） ----------
+# ---------- 5. 服务入口 shim（供 deploy/dsh.service 使用） ----------
 # systemd 的 ExecStart 要求绝对路径，unit 固定使用 /usr/local/bin/pnpm。
 # corepack enable 只把 shim 放进 node 所在目录，这里确保 /usr/local/bin 下也有
 # 一个能解析出 harness pin 版本的 pnpm（存在且版本正确则不动，幂等）。
@@ -300,7 +347,7 @@ case "$NODE_DIR" in
   *) echo "警告: node 位于 ${NODE_DIR}，不在系统默认 PATH 中；systemd 启动 dsh.service 时可能找不到 node。" >&2 ;;
 esac
 
-# ---------- 7. 渲染并安装 systemd unit ----------
+# ---------- 6. 渲染并安装 systemd unit ----------
 # deploy/dsh.service 是模板（@DEPLOY_DIR@ 占位符）：systemd 无法把 Environment= 变量
 # 展开进 WorkingDirectory/ExecStart，故在服务器侧按 $DEPLOY_DIR 渲染真实 unit 后安装
 # （服务器侧渲染可避免本地 sed 路径转义跨 ssh/sudo 多层 shell）。unit 落点
@@ -311,7 +358,7 @@ sed "s|@DEPLOY_DIR@|${DEPLOY_DIR}|g" "$UNIT_SRC" > /etc/systemd/system/dsh.servi
   || { echo "错误: 渲染/安装 dsh.service 失败（写入 /etc/systemd/system/dsh.service 需要 root 权限）。" >&2; exit 1; }
 echo "已渲染并安装 unit: /etc/systemd/system/dsh.service（DEPLOY_DIR=${DEPLOY_DIR}）"
 
-# ---------- 8. 挂载 bundle：把可挂载的插件包以 link 装进 profile dsh ----------
+# ---------- 7. 挂载 bundle：把可挂载的插件包以 link 装进 profile dsh ----------
 # 机制与 scripts/link-plugins.sh 一致（同一套探测/筛选逻辑，服务器侧执行）：
 # 可挂载候选 = plugins/*/ 根包或 packages/*/ 子包中声明了 dsh.bundle.patch 且 patch
 # 落在自己包目录内的包；被其他候选依赖的候选（聚合包的家族成员）不单独挂载。
