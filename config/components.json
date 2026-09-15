@@ -54,23 +54,6 @@
       "notes": "入口未提交在仓库内，需构建。曾被两个 entry 加载，靠 patches/disable-web-ui-better-sidebar.yml 消解。"
     },
     {
-      "name": "dsh-plugin-mineru",
-      "path": "plugins/dsh-plugin-mineru",
-      "sourceAuthority": "github",
-      "pinPolicy": "branch",
-      "pinRef": "master",
-      "ciScope": ["install", "test"],
-      "releaseScope": [],
-      "runtimeScope": "excluded",
-      "platforms": ["linux-x86_64", "macos-arm64"],
-      "buildMode": "prebuilt-verified",
-      "packageManager": "pnpm",
-      "testProfile": "vitest",
-      "stateSchema": "none",
-      "license": "AGPL-3.0",
-      "notes": "**可选自装组件**。AGPL-3.0 是本仓唯一的 copyleft：AGPL 与 Apache-2.0 只**单向**兼容（Apache 可并入 AGPL，反之不行），故含它的制品整体只能按 AGPL-3.0 分发，并触发 §13 的网络服务源码义务。据此 releaseScope=[] 且 runtimeScope=excluded —— **不进制品、不进默认 profile**，用户按需自装（见 THIRD-PARTY-NOTICES.md 的 AGPL 边界一节）。注意 ciScope 仍保留 install/test：**不随发布 ≠ 不验证**。入口 lib/index.js 已提交在仓库内 → 跳过构建（本地重建会因绝对路径哈希弄脏 submodule）。其 test 在 macOS 长 TMPDIR 下假红，见 backlog B8。"
-    },
-    {
       "name": "modlens",
       "path": "plugins/modlens",
       "sourceAuthority": "github",

@@ -32,12 +32,15 @@ const ENUM = {
   runtimeScope: ['required', 'excluded'],
   buildMode: ['source-build', 'prebuilt-verified', 'no-build'],
   platforms: ['linux-x86_64', 'macos-arm64'],
-  // SPDX 标识符。**刻意不含 `unknown`**：本字段进 THIRD-PARTY-NOTICES.md（合规文档），
-  // 「unknown」在那里等于没写。实测本仓正踩过这个坑——harness 长期记作 unknown，
-  // 而其 package.json 与 LICENSE 都明确是 MIT。宁可让登记人停下来查清楚。
-  // 新许可证请显式加进本表，别绕过。
+  // SPDX 标识符。两处**刻意的排除**，都会让登记人在此停下：
+  //   · 不含 `unknown` —— 本字段进 THIRD-PARTY-NOTICES.md（合规文档），「unknown」在那里
+  //     等于没写。本仓实测踩过：harness 长期记作 unknown，实为 MIT。
+  //   · **不含 AGPL / GPL / LGPL —— 本仓不允许 copyleft 组件**（政策，2026-09-15）。
+  //     copyleft 与 Apache-2.0 只**单向**兼容，一旦进场，**整个制品**都得按它分发。
+  //     确有需要时先走 ADR 并显式改本表，不要在 patch / 装配脚本里绕过。
+  // 其余新许可证请显式加进本表，别绕过。
   license: [
-    'MIT', 'Apache-2.0', 'AGPL-3.0', 'GPL-3.0', 'LGPL-3.0',
+    'MIT', 'Apache-2.0',
     'BSD-2-Clause', 'BSD-3-Clause', 'ISC', 'MPL-2.0', 'Unlicense',
   ],
 }
