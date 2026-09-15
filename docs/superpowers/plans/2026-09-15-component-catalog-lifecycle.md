@@ -1546,7 +1546,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 ⚠️ **不要**用"看起来像 git 错误就跳过"这种宽泛判据——那会把真正的"未被跟踪"也吞掉。
 判据要**具体**：该目录**不存在 git 元数据**才算"查不了"。
 
-
+- [ ] **Step 4: 加免责标注**
 
 `gen-notices.mjs` 的 `render()` 里，把组件清单表头改为：
 
