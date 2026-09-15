@@ -125,7 +125,7 @@ echo "==> 构建 harness"
 # 服务器侧硬性要求可复现安装：pnpm-lock.yaml 走 --frozen-lockfile，package-lock.json
 # 走 npm ci；两者都没有则直接失败（不静默降级为 unfrozen install）。此处有意比
 # scripts/setup.sh 更严格——本地开发允许无 lock 的插件跑普通 install。
-# 无 packageManager 的插件仓（如 dsh-plugin-mineru）corepack 在仓内回落 latest 不可靠；
+# 无 packageManager 的插件仓（如 modlens、dsh-market）corepack 在仓内回落 latest 不可靠；
 # 经 harness 目录解析 harness pin 的 pnpm（服务器上 corepack 同样按 harness packageManager
 # 解析），--dir 让命令仍在插件仓内执行。install 与 build 同此路径——按调用点各写一遍判定
 # 曾漏掉 build，故收敛成一个入口。

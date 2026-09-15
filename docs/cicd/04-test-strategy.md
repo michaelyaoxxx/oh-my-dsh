@@ -187,13 +187,6 @@ Mock server 只监听 loopback 或隔离测试网络，使用 OS 分配端口，
 | SIDEBAR-003 | 文件变更视图 | Agent 修改 fixture 后显示文件和 diff |
 | SIDEBAR-004 | 与 dsh-web 聚合包共存 | `/sidebar/api` 无重复 route；启动无 double-mount |
 
-### 9.3 `dsh-plugin-mineru`
-
-| ID | 场景 | 断言 |
-|---|---|---|
-| MINERU-001 | 解析固定小型 PDF | mock 服务收到正确文件；结构化结果进入工具/会话 |
-| MINERU-002 | 上游失败 | 用户得到可理解错误；临时文件清理；无无限重试 |
-
 ### 9.4 `modlens`
 
 | ID | 场景 | 断言 |

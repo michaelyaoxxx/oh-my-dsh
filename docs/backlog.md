@@ -26,13 +26,10 @@
 | # | 问题 | 现状 | 下一步 |
 | --- | --- | --- | --- |
 | B1 | **`plugins/dsh-web` pin 落后上游 191 个提交** | 实测（2026-09-13）：`pin vs origin/main` = behind 191 | 动 CI / 发版前先与上游同步，并跑一遍完整回归 |
-| B2 | **`plugins/dsh-plugin-mineru` pin 落后上游 7 个提交** | 同上，`pin vs origin/master` = behind 7 | 同上 |
 | B3 | **`make deploy` 从未实际执行过** | 脚本与 systemd unit 已写好，但部署路径**一次都没跑通** | 找一台 Linux x86-64 实跑一遍（注意：原生依赖必须在该平台各自构建） |
 | B4 | **新装插件的 UI 验收未做** | modsearch（搜索 + fetch）、dsh-at-file、dsh-agent-teams、dsh-market、modlens 等挂上了但未逐个走查 | 在 `make dev` 里逐个过主要交互 |
 | B6 | **dsh-TUI 的 macOS 路径长度缺陷应报上游** | 其 `scripts/verify-inject-channel.mjs` 用 `os.tmpdir()`，macOS 下 unix socket 路径达 105 字节 > `sun_path` 上限 104 → `listen EINVAL`。本仓已用 `TMPDIR=/tmp` 绕行 | 报给 ccch1mneyyy/dsh-TUI（建议短路径或建 socket 前检查长度） |
-| B7 | **本仓 CI 不跑任何 submodule 测试** | 实测：harness 962 个测试文件、10 个插件合计 700+，而 CI 里一个都没跑（只有 pin / shellcheck / 构建 / 冒烟） | 按 [CI/CD 测试策略](cicd/04-test-strategy.md) 与[迁移阶段](cicd/01-architecture.md#12-迁移与验收阶段)落地版本化测试 catalog、根仓测试入口和发布回归 |
-| B8 | **dsh-plugin-mineru 截断函数在长 TMPDIR 下「越截越长」** | 实测：`lib/index.js:219` 的 `maybeTruncateMd` 把绝对路径嵌进提示语，macOS 长 tmpdir 下 202 > 原文 200 → 其自测 1 failed；`TMPDIR=/tmp` 则 29 passed | 报上游（建议加兜底：提示语长于截断量时不做截断）；同时是「必须双平台测试」的实证 |
-| B9 | **可选自装组件（mineru）的安装路径未文档化** | 2026-09-15 起 mineru 因 AGPL 边界移出默认 profile 与制品（`runtimeScope: excluded`），本地 `make dev` 与远程部署**都不再挂它**；但「想用的人怎么装」还没写成文档 | 在 [plugin-dev.md](plugin-dev.md) 补一节：给出**实测过**的安装命令（`dsh plugin --profile dsh add …`；dsh-market 的 registry 快照里出现过 `github:HuanLinOTO/dsh-plugin-mineru` 形式，**须实测确认**），并说明它不在默认组合里、不进制品 |
+| B7 | **本仓 CI 不跑任何 submodule 测试** | 实测：harness 962 个测试文件、9 个插件合计 700+，而 CI 里一个都没跑（只有 pin / shellcheck / 构建 / 冒烟） | 按 [CI/CD 测试策略](cicd/04-test-strategy.md) 与[迁移阶段](cicd/01-architecture.md#12-迁移与验收阶段)落地版本化测试 catalog、根仓测试入口和发布回归 |
 
 ---
 

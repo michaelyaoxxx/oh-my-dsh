@@ -107,8 +107,6 @@ rsync 的排除清单（`deploy-remote.sh` 的 `RSYNC_ARGS`）已含 `log/`、`.
 
 - 插件仓必须提交 `pnpm-lock.yaml`（服务器侧强制 `--frozen-lockfile`）。
 - root 的 `sudo secure_path` 需包含 Node，否则会得到误导性的"未找到 node"。
-- `mineru` 已因 AGPL 边界移出默认运行时（`runtimeScope: excluded`），
-  部署**不会**挂载它，这是预期行为，不是故障。
 
 ---
 

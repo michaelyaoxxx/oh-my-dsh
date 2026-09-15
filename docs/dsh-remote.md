@@ -312,11 +312,10 @@ v0.6.3 是「插件 + 服务」的混合体，**不能照搬既有插件流程**
 
 | 插件 | 许可证 |
 | --- | --- |
-| dsh-plugin-mineru | **AGPL-3.0** |
 | dsh-web | **Apache-2.0**（另含 BSD-3-Clause 组件） |
 | dsh-agent-teams / dsh-at-file / dsh-automation / dsh-better-sidebar / dsh-market / modlens / modsearch | MIT |
 
-所以本仓**本来就是混合许可**，引入 PolyForm-Noncommercial 并不构成「从 MIT 变成非 MIT」的突变。真正需要注意的是：**PolyForm-Noncommercial 比 AGPL-3.0 更严**（后者仍是 OSI 认可的开源许可，前者不是），且它禁止商业用途——**若涉及工作机器请先确认**。
+所以本仓**本来就是混合许可**（MIT + Apache-2.0），引入 PolyForm-Noncommercial 并不构成「从 MIT 变成非 MIT」的突变。真正需要注意的是：**PolyForm-Noncommercial 不是 OSI 认可的开源许可**，且禁止商业用途——**若涉及工作机器请先确认**。
 
 ---
 

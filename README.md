@@ -49,5 +49,6 @@ make dev       # 启动 DSH Web（$DSH_HOME=./.dsh，插件 link 挂载，改插
 `harness/` 与 `plugins/*` 是 **submodule**——它们各自携带自己的许可证，**不**由本仓的 LICENSE 覆盖。
 各组件许可证、来源与是否进制品见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)（自动生成，勿手改）。
 
-> ⚠️ 含 **AGPL-3.0** 组件的制品，整个制品须按 AGPL-3.0 分发（AGPL 与 Apache-2.0 只单向兼容）。
-> 当前 AGPL 组件的制品状态见上方声明文件。
+> ⚠️ 本仓**不接纳 copyleft 组件**（AGPL / GPL / LGPL）。这条**由机器强制**——
+> `scripts/check-components.mjs` 的许可证受控词表不含它们，登记即被 CI 拒绝。
+> 理由与变更路径见 [docs/cicd/03-artifact-and-release.md](docs/cicd/03-artifact-and-release.md) §3.3。

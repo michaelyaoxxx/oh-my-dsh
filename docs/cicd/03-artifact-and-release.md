@@ -107,26 +107,31 @@ macOS 结果不能替代 Linux release artifact，反之亦然。
 
 规则（按 copyleft 强度递减）：
 
-| 组件许可证 | 可否进 bundle | 附加要求 |
+| 组件许可证 | 可否进本仓 | 附加要求 |
 | --- | --- | --- |
-| MIT / Apache-2.0 / BSD / ISC | ✅ | 在 `licenses.json` 与制品内附许可证原文 |
-| **AGPL-3.0 / GPL-3.0** | ⚠️ **默认不进** | 进则**整个制品按该 copyleft 许可分发**，须附全文、提供完整对应源码；AGPL 另触发 §13 网络服务源码义务 |
+| MIT / Apache-2.0 / BSD / ISC / MPL-2.0 / Unlicense | ✅ | 在 `licenses.json` 与制品内附许可证原文 |
+| **AGPL-3.0 / GPL-3.0 / LGPL-3.0** | ❌ **不接纳** | 见下 |
 | 无许可证 / 自定义条款 | ❌ | 先确定许可证再登记 |
 
-**为什么 AGPL 是"默认不进"而不是"看情况"**：AGPL-3.0 与 Apache-2.0 只**单向**兼容——
-Apache-2.0 代码可以并入 AGPL 作品，**反之不行**（Apache-2.0 的专利与赔偿条款对 AGPL 构成附加限制）。
-因此一旦任何 AGPL 组件进 bundle，**整个制品实际只能按 AGPL-3.0 分发**，
-其中所有 Apache-2.0 组件也随之被 AGPL 覆盖。这不是可以"标注一下"绕过的事。
+**为什么 copyleft 一律不接纳**：AGPL-3.0 与 Apache-2.0 只**单向**兼容——Apache-2.0 代码
+可以并入 AGPL 作品，**反之不行**（Apache-2.0 的专利与赔偿条款对 AGPL 构成附加限制）。
+一旦任何 copyleft 组件进场，**整个制品实际只能按该 copyleft 许可分发**，其中所有
+Apache-2.0 组件也随之被覆盖。这不是"标注一下"能绕过的事。
 
-**当前状态**：`dsh-plugin-mineru`（AGPL-3.0）是唯一 copyleft 组件，已据此设为
-`releaseScope: []` + `runtimeScope: excluded`——**不进制品、不进默认 profile，改为可选自装**。
-其 `ciScope` 保留 `install`/`test`：**不随发布 ≠ 不验证**。
+**这是政策，且由机器强制**——`scripts/check-components.mjs` 的 `license` 受控词表
+**不含 AGPL/GPL/LGPL**。想把 copyleft 组件登记进组件目录，会在 CI 第一步被拒。
+确需变更政策时，先走 ADR 并显式改那张词表；**不要在 patch / 装配脚本里绕**。
+
+> **本仓曾有过 copyleft 组件，2026-09-15 已彻底移除**——gitlink、`.gitmodules` 条目、
+> 组件目录条目与全部活跃引用一并清掉。注意措辞：不是"移出制品"，是**不在仓内**。
+> 历史记录（`docs/reviews/`、`docs/superpowers/`、`docs/cicd/backup/`）按本仓规则
+> **保持只读、不追改**，其中仍会提到它。
 
 **机器强制（已生效，非设计）**：
 
 | 检查 | 位置 |
 | --- | --- |
-| `license` 必填 + SPDX 受控词表（不含 `unknown`） | `scripts/check-components.mjs` |
+| `license` 必填 + SPDX 受控词表（不含 `unknown`，**不含 copyleft**） | `scripts/check-components.mjs` |
 | 组件目录声明 ↔ 组件自身 `package.json` 一致 | 同上 |
 | `THIRD-PARTY-NOTICES.md` 未过期 | `scripts/gen-notices.mjs --check`，接入 `verify.yaml` 与 `release.yaml` |
 
@@ -358,8 +363,7 @@ Candidate 进入 `ReleaseReady` 前必须满足：
 - staging 部署与 [04-test-strategy.md](04-test-strategy.md) required catalog 全部通过；
 - 真实模型必测集合有结果且通过；
 - SBOM、许可证、provenance、checksum 和 signature 完整；
-- **许可证准入通过**（§3.3）：bundle 内无未登记的 copyleft 组件；若有 AGPL/GPL，
-  必须已有明确的分发许可决策与源码提供方案，而不是"打包时才发现"；
+- **许可证准入通过**（§3.3）：bundle 内无 copyleft 组件（本仓一律不接纳，由受控词表机器强制）；
 - required 测试不存在 skipped、missing、flaky-green；
 - 当前没有针对该 candidate 的未关闭 release blocker。
 

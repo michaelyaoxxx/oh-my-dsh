@@ -109,7 +109,7 @@ echo "==> 构建 harness"
 # ---------- 5. 各插件：安装依赖 + 构建 ----------
 #    dsh-web 是 pnpm workspace，自带 pnpm-lock.yaml → --frozen-lockfile 可行；
 #    根 package.json 有 build（pnpm -r build）。
-# 无 packageManager 的插件仓（如 dsh-plugin-mineru）corepack 在仓内向上找不到 pin 会回落
+# 无 packageManager 的插件仓（如 modlens、dsh-market）corepack 在仓内向上找不到 pin 会回落
 # latest（本机缓存的 12.3.4 已损坏）；统一经 harness 目录解析 harness pin 的 pnpm，--dir 让
 # 命令仍在插件仓内执行（仓内 pnpm-workspace.yaml / lockfile 生效）。install 与 build 同此路径
 # ——按调用点各写一遍判定曾漏掉 build，故收敛成一个入口。

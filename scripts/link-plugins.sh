@@ -72,8 +72,8 @@ dsh() {
 # 反向收敛：**已挂载但现已 excluded** 的包。
 # 本脚本原本只做「跳过添加」，从不摘除——某个组件从 required 改成 excluded 后，profile
 # 里上一轮留下的 link 仍在，于是组件目录说「不进运行时」而实际照样被加载。这正是本仓
-# 反复被咬的「配置一套、实际一套」，且**覆盖面很广**：dsh-tui、dsh-plugin-mineru 都属
-# excluded，未来把任何组件改判 excluded 都会踩到。
+# 反复被咬的「配置一套、实际一套」，且**覆盖面很广**：dsh-tui 就属 excluded，
+# 未来把任何组件改判 excluded 都会踩到。
 # 故这里做**幂等摘除**：excluded 即「不属于本 profile」，留在里面就是错的。
 #
 # 摘除走 `dsh plugin --profile <p> remove <name>` —— `plugin` 子命令把参数**逐字转发给
@@ -107,8 +107,8 @@ for d in plugins/*/; do
   _skip=0
   for _s in ${SKIP_MOUNT[@]+"${SKIP_MOUNT[@]}"}; do [ "$root_dir" = "$_s" ] && _skip=1; done
   if [ "$_skip" = 1 ]; then
-    # 理由不写死在这里：excluded 的原因不止一种（dsh-tui 是终端前端跑独立 profile；
-    # dsh-plugin-mineru 是 AGPL 边界）。原因写在组件目录的 notes 里，那里是事实源。
+    # 理由不写死在这里：excluded 的原因不止一种（如 dsh-tui 是终端前端、跑独立 profile）。
+    # 原因写在组件目录的 notes 里，那里是事实源。
     echo "==> 跳过挂载: ${root_dir}（runtimeScope=excluded，原因见 config/components.json）"
     continue
   fi
