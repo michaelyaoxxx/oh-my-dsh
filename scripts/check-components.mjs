@@ -13,8 +13,9 @@
 //   node scripts/check-components.mjs --list prepare    # 具名：需被"准备"（安装+构建）的组件
 //   node scripts/check-components.mjs --list ci:<scope> # 枚举 ciScope 含 <scope> 的组件路径
 //   node scripts/check-components.mjs --list runtime:<required|excluded>
+//   node scripts/check-components.mjs --plan prepare    # **动作计划**：每行 <path>\t<prepareMode>
 //
-// 退出码：0 通过；1 校验失败
+// 退出码：0 通过；1 校验失败（**含 --list / --plan**：两个查询入口都先校验再查询）
 
 import { readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
@@ -313,7 +314,16 @@ const NAMED_SELECTORS = {
 }
 
 function list(catalog, selector) {
-  const resolved = NAMED_SELECTORS[selector] ?? selector
+  // ⚠️ 判据必须用 Object.hasOwn，**不能**写成 `NAMED_SELECTORS[selector] ?? selector`。
+  // selector 来自 argv，是**用户可控**的；下标访问会在**原型链**上查找，于是
+  // constructor / toString / __proto__ / valueOf / hasOwnProperty 命中的是
+  // Object.prototype 上的函数——resolved 成了函数，下一行 `.includes` 抛**未捕获的**
+  // `TypeError: resolved.includes is not a function`（裸堆栈，rc=1）。
+  // 它 fail-closed（不会静默返回空集），故**不是安全洞**，但诊断形态很差：用户看到的是
+  // 内部堆栈，而不是"这个选择器不存在"。与上面 FIELD_CLASS 那处是同一手法。
+  // 防退化装置是 probe-catalog.sh 的 D9——注意那条用例断言的是报错**形态**（不能是裸
+  // TypeError），因为修复前 rc 同样是 1，"只断言 rc≠0"的用例抓不住它。
+  const resolved = Object.hasOwn(NAMED_SELECTORS, selector) ? NAMED_SELECTORS[selector] : selector
   const [kind, value] = resolved.includes(':') ? resolved.split(':', 2) : [resolved, undefined]
   if (!['ci', 'runtime', 'release'].includes(kind)) {
     console.error(`✗ 未知选择器 ${selector}。具名：${Object.keys(NAMED_SELECTORS).join(' / ')}；或 ci:<scope> / release:<scope> / runtime:<required|excluded>`)
@@ -333,13 +343,59 @@ function list(catalog, selector) {
   for (const c of hit) console.log(c.path)
 }
 
+// --plan <named-selector>：输出**动作计划**而不只是路径。
+//
+// 为什么要输出动作而不只是路径：`--list prepare` 只统一了「准备哪些组件」这个**决策**。
+// 若 setup 与 remote-install 各自实现一套 `case "$prepareMode"` 去决定**怎么准备**，
+// 漂移只会从「选哪个字段」变成「怎么执行动作」——病没治好，换了个地方发作。
+// 但**这仍然只是决策数据**：动作的**执行**必须共用同一个 executor（见 prepare-executor.sh）。
+//
+// 输出契约与 list() 相同：成功时 stdout **只有**机器接口本身（每行 `<path>\t<prepareMode>`），
+// 失败走 stderr + 非 0。消费方按制表符切分，多一行摘要就会被当成组件路径读进去。
+//
+// ⚠️ 下面的过滤条件与 NAMED_SELECTORS.prepare 的取值（'runtime:required'）是**同一条**
+// 语义，写在两处。若将来 prepare 的定义变成别的字段，这里**不会**跟着变——两处必须一起改。
+function plan(catalog, selector) {
+  // 只认具名选择器：`--plan ci:test` 这类**在 --list 下合法但无动作定义**的选择器必须报错。
+  // 静默输出空计划会被消费方读成「没有要准备的组件」——fail-open 的同一形态。
+  if (selector !== 'prepare') {
+    console.error(`✗ --plan 只支持具名选择器 prepare（收到 ${JSON.stringify(selector)}）`)
+    process.exit(1)
+  }
+  for (const c of catalog.components) {
+    if (c.runtimeScope !== 'required') continue
+    console.log(`${c.path}\t${c.prepareMode}`)
+  }
+}
+
 const args = process.argv.slice(2)
 const catalog = loadCatalog()
+
+// 先校验再查询：`--list` 此前**直接查询、绕过 validate()**，于是一个字段非法的
+// catalog 能让查询器照常输出，调用方据此执行——正是 fail-open。
+// 这不是假想风险，实测过：把某个组件的 runtimeScope 改成非法值（如 "bogus"），修复前
+// `--list prepare` 的 rc=0 且 stdout 为空。而 deploy/remote-install.sh **没有**
+// setup.sh:212 那样的显式前置校验，直接 `PREPARE_LIST="$(node … --list prepare)"`，
+// 靠 `set -euo pipefail` + `$()` 传播退出码兜底——**这条链只在失败返回非 0 时才成立**。
+// 一旦 rc=0 而输出为空，PREPARE_LIST 就是空的 → 每个插件走「跳过」→
+// **部署"成功"却没装东西**。所以守卫必须在**分发之前**，且用 process.exit **立即**终止。
+//
+// ⚠️ 下面的 else 分支还会再跑一次 validateCatalog（在 validate() 里）。那是**无害的**：
+//    守卫失败时已经 exit 了，重复只可能发生在"已经通过"的 catalog 上（静默、返回 true）。
+//    但别把这里的 process.exit(1) 改成 process.exitCode = 1 —— 那会让每个失败打印**两遍** ✗，
+//    而 probe-catalog.sh 的 run_case 以「CAUGHT 用例恰好 1 条 ✗」作唯一归因判据。
+if (!validateCatalog(catalog)) process.exit(1)
+
 const li = args.indexOf('--list')
+const pl = args.indexOf('--plan')
 if (li !== -1) {
   const sel = args[li + 1]
   if (!sel) { console.error('✗ --list 需要一个选择器，如 ci:test'); process.exit(1) }
   list(catalog, sel)
+} else if (pl !== -1) {
+  const sel = args[pl + 1]
+  if (!sel) { console.error('✗ --plan 需要一个具名选择器，如 prepare'); process.exit(1) }
+  plan(catalog, sel)
 } else {
   validate(catalog)
 }

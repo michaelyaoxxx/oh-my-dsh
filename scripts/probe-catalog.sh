@@ -91,17 +91,23 @@ good_component() {
   printf '%s' "$out"
 }
 
-run_case() { # $1=场景名  $2=期望(CAUGHT/GAP)
+run_case() { # $1=场景名  $2=期望(CAUGHT/GAP)  $3...=额外 CLI 参数（可选，原样传给校验器）
   # 只跑校验并判定；fixture 由调用方**在此之前**设好。
   # 刻意不接"构造函数名"参数——兄弟脚本 probe-license-gate.sh 的 $6 是真被调用的，
   # 若这里也写一个同名参数却不用，后续任务照注释传函数名会**静默不执行构造**，
   # 造出与被测场景不符的 fixture，用例可能假过。
-  local name="$1" expect="$2" out rc got mark="ok" cerr="" nviol=0
+  #
+  # $3... 是**真的会传下去**的（D 组要用 `--list` / `--plan` 这类查询入口），
+  # 不是为对齐签名而摆着：写入形参却不消费，正是上面那段警告的形态。
+  # 用 shift + "$@" 而不是 `$3` 拼接：参数个数不定（`--list prepare` 是两个），
+  # 且 `"$@"` 在无参数时展开为**零个词**——bash 3.2 + `set -u` 下实测安全。
+  local name="$1" expect="$2"; shift 2
+  local out rc got mark="ok" cerr="" nviol=0
   # 构造失败即失败：fixture 已经建好了才轮到本函数，故先收错误再判定。
   # 不收的话，坏 override 会让用例**假过**（绿的，理由却是"双向集合不符"）——
   # 断言只到"退出码非 0"的粒度挡不住这个，本任务实测踩过。
   if [ -s "$CONSTRUCT_ERR" ]; then cerr="$(cat "$CONSTRUCT_ERR")"; : > "$CONSTRUCT_ERR"; fi
-  out="$(cd "$TMP" && node scripts/check-components.mjs 2>&1)"; rc=$?
+  out="$(cd "$TMP" && node scripts/check-components.mjs "$@" 2>&1)"; rc=$?
   got="GAP"; [ "$rc" -ne 0 ] && got="CAUGHT"
   [ "$got" = "CAUGHT" ] && nviol="$(printf '%s' "$out" | grep -c '✗')"
   if [ "$got" != "$expect" ]; then mark="!! 与预期不符"; FAILED=$((FAILED + 1)); fi
@@ -125,6 +131,27 @@ run_case() { # $1=场景名  $2=期望(CAUGHT/GAP)
   # 与本用例无关，打出来会把读者引到错误的规则上（实测：会显示上一个用例的双向集合报错）。
   # 理由后面带上 ✗ 条数：唯一归因是判据，把它的实测值一并印出来，读者不必另跑一遍脚本。
   [ -z "$cerr" ] && [ "$got" = "CAUGHT" ] && printf '       理由(✗×%s): %s\n' "$nviol" "$(printf '%s' "$out" | grep -m1 '✗' | cut -c1-80)"
+}
+
+# 断言一条**输出内容**用例（run_case 只管退出码，管不了"计划里到底有没有那一行"），
+# 并**真的**累加 FAILED。
+#
+# ⚠️ 为什么不能写成 `printf ... "$(cond && echo ok || { ...; FAILED=$((FAILED+1)); })"`：
+#   命令替换 `$( )` 是**子 shell**，里面的 FAILED 自增**出不去**——用例会打印 `!!`，
+#   而 `--strict`（`make check` 用的正是它）**仍然 rc=0**，即「报了红但不判红」。
+#   实测过：把 D3 的断言改成必然失败，`--strict` 退出码仍是 0、只留下两行 `!!`。
+#   这与文件顶部 record_construct_error 记的是**同一形态**（失败发生在子 shell 里、被
+#   静默吞掉），只是这次被吞掉的是**判据本身**。
+#   顺带：那种写法还会触发 shellcheck SC2015 / SC2030 / SC2031，而 `-S style` 是门禁。
+# 故断言与自增必须在**同一层**：调用方先跑断言命令（不开子 shell），把它的退出码传进来。
+# $1=场景名  $2=断言命令的退出码（0=通过）  $3=失败说明
+assert_case() {
+  if [ "$2" -eq 0 ]; then
+    printf '  %-44s %s\n' "$1" "ok"
+  else
+    printf '  %-44s %s\n' "$1" "!! $3"
+    FAILED=$((FAILED + 1))
+  fi
 }
 
 echo "组件目录校验 覆盖夹具"
@@ -264,6 +291,71 @@ run_case "C8 releaseScope 写成标量（须拒）"       CAUGHT
 write_catalog "[$(good_component c1 plugins/c1 '{"platforms":"linux-x86_64"}')]" 2
 write_gitmodules "plugins/c1"
 run_case "C9 platforms 写成标量（须拒）"          CAUGHT
+
+echo
+echo "== D. --plan prepare（动作计划）与查询入口「先校验再查询」=="
+# D1–D3：`--plan` 输出的是**动作计划**（`<path>\t<prepareMode>`），不只是路径。
+# 为什么要输出动作：`--list prepare` 只统一了「准备哪些组件」这个**决策**；若 setup 与
+# remote-install 各自写一套 `case "$prepareMode"` 决定**怎么准备**，漂移只会从「选哪个
+# 字段」变成「怎么执行动作」——病没治好，换了个地方发作。
+# 两个组件：aaa 是 required/source-build（应出现），bbb 是 excluded（不应出现）。
+write_catalog "[$(good_component aaa plugins/aaa),$(good_component bbb plugins/bbb '{"runtimeScope":"excluded","prepareMode":"none","releaseScope":[]}')]" 2
+write_gitmodules "plugins/aaa plugins/bbb"
+# D5 是**基线**：合法目录下 `--plan` 必须退出 0。没有它，D6/D7 的 CAUGHT 可能只是
+# 夹具坏了（"什么都拒"时 CAUGHT 用例全假过，同 B5b 那段注释）。
+run_case "D5 合法目录 --plan（基线，应通过）" GAP --plan prepare
+plan_out="$(cd "$TMP" && node scripts/check-components.mjs --plan prepare 2>&1)"
+printf '%s' "$plan_out" | grep -q 'plugins/aaa.*source-build'; assert_case "D1 计划含 required 组件" $? "缺 aaa"
+# D2 是**否定**断言（计划里**不能**出现 bbb），故用 `!` 取反后再交给 assert_case
+# （它认 rc=0 为通过）。⚠️ 这里的 `!` 不是修饰，是**判据本身**：漏掉它就变成
+# "计划里有 bbb 才通过"，与用例名相反——实测踩过（本用例立刻变红，抓住了这次改错）。
+! printf '%s' "$plan_out" | grep -q 'plugins/bbb'; assert_case "D2 计划**不含** excluded 组件" $? "混入 bbb"
+printf '%s' "$plan_out" | awk -F'\t' '$1=="plugins/aaa" && $2!=""{f=1} END{exit !f}'; assert_case "D3 计划带 prepareMode（制表符分隔）" $? "无制表符分隔的动作"
+# D4：stdout 是**机器接口**（消费方 `IFS=$'\t' read` 或逐行取路径）。多一行摘要
+# （如 validate() 的 `✓ 组件目录校验通过…`）会被当成组件路径读进去——所以计划必须
+# **恰好**是那一行。D1–D3 抓不住这个：混进摘要行时它们仍然全绿（实测过）。
+plan_lines="$(printf '%s\n' "$plan_out" | grep -c .)"
+# 不用 `[ ... ]; assert_case ... $?`：那会触发 shellcheck SC2319（`$?` 指的是**条件**，
+# 不是命令）——`-S style` 下即失败。显式 if 定性，语义也更直白。
+d4_rc=0; [ "$plan_lines" -eq 1 ] || d4_rc=1
+assert_case "D4 stdout 只有计划行（无摘要污染）" "$d4_rc" "stdout 有 ${plan_lines} 行"
+
+# ★ D6 是**硬验收项**：目录非法时 `--list` 必须**非 0 退出**。
+# 失效链是真实存在的，不是假想：deploy/remote-install.sh **没有** setup.sh:212 那样的
+# 显式前置校验，直接 `PREPARE_LIST="$(node … --list prepare)"`，靠 `set -euo pipefail`
+# + `$()` 传播退出码兜底——**这条链只在 --list 失败返回非 0 时才成立**。
+# 若实现成"打印错误但继续、rc=0、stdout 空"，则 PREPARE_LIST 为空 → 每个插件走「跳过」
+# → 部署"成功"却没装东西。修复前实测（本用例的 fixture）：`--list prepare` rc=0、stdout 空。
+# ⚠️ 构造非法 catalog 时只让它命中**一条**规则（ENUM 取值非法）：run_case 以
+#    「CAUGHT 用例恰好 1 条 ✗」作唯一归因判据，多命中一条就成了"因无关原因变红"。
+write_catalog "[$(good_component ok plugins/ok '{"runtimeScope":"bogus"}')]" 2
+write_gitmodules "plugins/ok"
+run_case "D6 非法目录 ⇒ --list 须非零退出"   CAUGHT --list prepare
+run_case "D7 非法目录 ⇒ --plan 须非零退出"   CAUGHT --plan prepare
+
+# D8：`--plan` 只接受具名选择器 prepare。传一个**在 --list 下合法、但无动作定义**的选择器
+# （ci:test）必须报错，不能静默输出空计划——空计划会被消费方读成"没有要准备的组件"。
+write_catalog "[$(good_component ok plugins/ok)]" 2
+write_gitmodules "plugins/ok"
+run_case "D8 --plan 非 prepare 选择器须拒"   CAUGHT --plan ci:test
+
+# D9：选择器名来自 **argv**（用户可控），而 `NAMED_SELECTORS[selector] ?? selector` 是
+# **原型查找**。实测（修复前）：--list constructor / toString / __proto__ / valueOf /
+# hasOwnProperty 全部 rc=1，但抛的是**未捕获的** `TypeError: resolved.includes is not a
+# function`（裸堆栈）。它 fail-closed（不会静默返回空集），故**不是安全洞**，但诊断形态很差。
+# ⚠️ 本用例**必须断言报错形态**：修复前 rc 同样是 1，只断言 rc≠0 的用例修复前后都"通过"
+# ——那不是防退化装置。与 T3 刚修的 `Object.hasOwn(FIELD_CLASS, f)` 是同一手法。
+d9_bad=""
+for sel in constructor toString __proto__ valueOf hasOwnProperty; do
+  out="$(cd "$TMP" && node scripts/check-components.mjs --list "$sel" 2>&1)"; rc=$?
+  if [ "$rc" -eq 0 ]; then d9_bad="${sel}:rc=0（应非零）"
+  elif printf '%s' "$out" | grep -q 'TypeError'; then d9_bad="${sel}:裸 TypeError 堆栈"
+  elif ! printf '%s' "$out" | grep -q '未知选择器'; then d9_bad="${sel}:报错不是「未知选择器」"
+  fi
+  [ -n "$d9_bad" ] && break
+done
+d9_rc=0; [ -z "$d9_bad" ] || d9_rc=1
+assert_case "D9 原型链选择器名（须干净拒绝）" "$d9_rc" "${d9_bad:-}"
 
 echo
 if [ "$STRICT" = 1 ] && [ "$FAILED" -ne 0 ]; then
