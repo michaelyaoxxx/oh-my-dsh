@@ -588,6 +588,38 @@ write_catalog "[$(good_component e10 plugins/e9 '{"prepareMode":"tracked-prebuil
 write_gitmodules "plugins/e9"
 run_case "E10 无 git 元数据 + --require-materialized" CAUGHT --require-materialized
 
+# ── E11：第三档——「**有**元数据但**不可用**」 ────────────────────────────────────
+# 三分判据的第一版只盖住了"`.git` 根本不存在"。若 `.git` 是个**文件**（子仓 / worktree 的
+# gitlink，内容形如 `gitdir: <path>`）而那个 path **悬空**，`git ls-files` 同样跑不了——
+# 只判"文件在不在"的判据会把它归成「确认未被跟踪」，于是又输出那句**未经验证的**
+# 「fresh clone 上该组件是坏的」（而那些入口其实是**被跟踪**的）。
+# 故判据必须覆盖"有元数据但不可用"，同样归入 unknown（计入 skipped）。
+# ⚠️ 仍然**具体**：`.git` 是**目录**（普通检出）⇒ 可用；是**文件**且 `gitdir:` 指向
+#    **存在**的东西 ⇒ 可用；否则不可用。**不**是"git 报错就跳过"——那会把真正的
+#    「确认未被跟踪」（E1/E3 那一档，必须 fail）一起吞掉。
+# 三档各有能区分它的用例：① 已跟踪 ⇒ E2；② 确认未被跟踪 ⇒ E1/E3；③ 查不了 ⇒ E9（没元数据）/ E11（悬空）。
+# 造法刻意分三步：先造**真**仓（`.git` 是目录），删掉它，再写一个指向不存在路径的 gitlink
+# 文件——要测的正是"从可用变成不可用"这一步，把它藏进一个参数里就看不见了。
+make_subrepo plugins/e11 '{"name":"e11","main":"lib/index.js"}' "lib/index.js"
+rm -rf "$TMP/plugins/e11/.git"
+printf 'gitdir: %s\n' "$TMP/plugins/e11-nonexistent-gitdir" > "$TMP/plugins/e11/.git"
+# 夹具自检：那个 gitdir 目标**必须真的不存在**，否则本用例会退化成"元数据可用"而假过。
+if [ -e "$TMP/plugins/e11-nonexistent-gitdir" ]; then
+  record_construct_error "E11 夹具坏了：gitdir 目标竟然存在（本用例会退化成「元数据可用」）"
+fi
+write_catalog "[$(good_component e11 plugins/e11 '{"prepareMode":"tracked-prebuilt"}')]" 2
+write_gitmodules "plugins/e11"
+e11_bad=""
+if [ -s "$CONSTRUCT_ERR" ]; then e11_bad="构造失败：$(cat "$CONSTRUCT_ERR")"; : > "$CONSTRUCT_ERR"; fi
+e11_out="$(cd "$TMP" && node scripts/check-components.mjs 2>&1)"; e11_rc=$?
+[ "$e11_rc" -eq 0 ] || e11_bad="${e11_bad}；非严格模式应 rc=0，实测 rc=${e11_rc}"
+printf '%s' "$e11_out" | grep -q '未被 git 跟踪' && e11_bad="${e11_bad}；把「元数据不可用」说成了「未被 git 跟踪」"
+printf '%s' "$e11_out" | grep -q 'fresh clone 上该组件是坏的' && e11_bad="${e11_bad}；下了「fresh clone 上该组件是坏的」这个未经验证的结论"
+printf '%s' "$e11_out" | grep -q 'e11' || e11_bad="${e11_bad}；输出里没提到 e11（真的查了吗？）"
+e11_flag=0; [ -z "$e11_bad" ] || e11_flag=1
+assert_case "E11 悬空 gitlink（非严格，应通过且不得称组件坏）" "$e11_flag" "$e11_bad"
+printf '       实测: rc=%s；materialized 行: %s\n' "$e11_rc" "$(printf '%s' "$e11_out" | grep -m1 'materialized 检查')"
+
 echo
 echo "== F. 消费者的 fail-open（目录查询失败必须 fail closed）=="
 # 这一组测的是**消费方**：`--list` 已经在 D6 里证明"非法目录 ⇒ 非零退出"，但消费方若把
@@ -871,17 +903,50 @@ fi
 
 echo
 echo "== H. 所有 catalog 读取方都必须 fail-closed =="
-# 夹具目前只拷了 check-components.mjs（见脚本顶部的 cp），H2 要用到第二个：
+# ⚠️ **夹具完整性**：每个被断言的读取方都**必须先拷进** $TMP/scripts/，且调用路径与拷贝路径
+#    一致。漏拷的后果不是"用例失败"，而是**永久假绿**——`node scripts/<x>` 会以
+#    **Cannot find module** rc=1 退出，被下面的 `if` 读成"拒绝了"。
+#    实测（Fix round 1 评审）：本组此前往循环里加了 gen-notices.mjs 却**没拷它**，
+#    于是把它的 loader 改回 `JSON.parse`（**正是本任务要修的那个 bug**）仍然全绿、
+#    `--strict` 仍 rc=0 ——那条断言在任何 gen-notices 内容下都打印 ok。
+#    故这里不只是补一行 cp：循环里**逐个断言文件真的在**，缺了就判红（不是判绿）。
+#    这样"以后再加第 5 个读取方却忘了拷"会**自动变红**，而不是自动变绿。
+# 另：check-components.mjs 是 check-licenses / gen-notices 的 import 目标，也在下面的
+#    循环里 ⇒ 它的存在同样被断言（漏拷它会让那两个以 ERR_MODULE_NOT_FOUND 假绿）。
 cp "$ROOT/scripts/check-licenses.mjs" "$TMP/scripts/"
+cp "$ROOT/scripts/gen-notices.mjs" "$TMP/scripts/"
 cp "$ROOT/scripts/check-pins.sh" "$TMP/scripts/"
+
+# ── H0：夹具能力自检——**每个读取方在合法目录上必须能跑通**（rc=0）──────────────
+# 这是本组防"永久假绿"的**根**装置。只断言"非法目录 ⇒ 非零退出"是**不够**的：读取方
+# **根本没跑起来**（漏拷、import 缺失、路径写错）时同样是非零退出，断言照绿。
+# 实测（Fix round 1 评审）：本组曾漏拷 gen-notices.mjs，它在夹具里以 Cannot find module
+# 退出——于是"拒绝工作"与"根本没能运行"被混为一谈，那条断言在**任何** gen-notices
+# 内容下都打印 ok（把它的 loader 改回 JSON.parse 也抓不住）。
+# 判据取**行为**（合法目录 ⇒ rc=0）而不是"文件在不在"：它同时盖住漏拷与坏 import，
+# 与上面那几条 `[ -f ]` 互补——后者给的是更具体的诊断。
+# check-pins 用 `--list`：它不联网（默认路径会 fetch 各 submodule 的远端）。
+write_catalog "[$(good_component h0 plugins/h0 '{"prepareMode":"none","runtimeScope":"excluded","releaseScope":[]}')]" 2
+write_gitmodules "plugins/h0"
+h0_bad=""
+for f in check-components.mjs check-licenses.mjs gen-notices.mjs; do
+  (cd "$TMP" && node "scripts/$f" >/dev/null 2>&1) \
+    || h0_bad="${h0_bad}${f} 在**合法**目录上就没跑通（那么「拒绝 version=1」可能只是它没跑起来）；"
+done
+(cd "$TMP" && bash scripts/check-pins.sh --list >/dev/null 2>&1) \
+  || h0_bad="${h0_bad}check-pins.sh --list 在合法目录上就没跑通；"
+h0_rc=0; [ -z "$h0_bad" ] || h0_rc=1
+assert_case "H0 夹具自检：四个读取方在合法目录上能跑通" "$h0_rc" "$h0_bad"
+
 # 造一个**版本非法**的 catalog，逐个读取方跑：谁静默接受，谁就是 fail-open。
 # 背景（2026-09-15 T2 评审实测）：check-components.mjs 会拒绝，但
 # check-licenses.mjs 与 gen-notices.mjs **rc=0 静默接受**，check-pins.sh 同理。
 printf '{\n  "version": 1,\n  "components": []\n}\n' > "$TMP/config/components.json"
-# ⚠️ 名单必须覆盖**全部**读取方，不只是前两个：漏掉的那个会成为唯一的 fail-open 出口，
-#    而这一组的意义恰恰是"一个都不许静默接受"。gen-notices 也进循环（它写的是
-#    $TMP 下的生成物，碰不到本仓文件）。
 for f in check-components.mjs check-licenses.mjs gen-notices.mjs; do
+  if [ ! -f "$TMP/scripts/$f" ]; then
+    printf '  %-44s %s\n' "H $f 拒绝 version=1" "!! 夹具里没有 ${f}（会以 Cannot find module 假绿）"; FAILED=$((FAILED + 1))
+    continue
+  fi
   if (cd "$TMP" && node "scripts/$f" >/dev/null 2>&1); then
     printf '  %-44s %s\n' "H $f 拒绝 version=1" "!! 静默接受"; FAILED=$((FAILED + 1))
   else
@@ -892,10 +957,24 @@ done
 # 它是 T7 实现者实测的**假绿当事人**——catalog 读不出来时它打印「✓ 全部 pin 校验通过」
 # 且 rc=0。在 CI / release 路径上它被同组的 check-components.mjs 遮蔽（不会整体假绿），
 # 但**单独跑就是假绿**，属"被遮蔽"而非"不可达"。判据同上面：目录非法 ⇒ 必须非零退出。
-if (cd "$TMP" && bash scripts/check-pins.sh >/dev/null 2>&1); then
+if [ ! -f "$TMP/scripts/check-pins.sh" ]; then
+  printf '  %-44s %s\n' "H check-pins.sh 拒绝 version=1" "!! 夹具里没有 check-pins.sh（会以 No such file 假绿）"; FAILED=$((FAILED + 1))
+elif (cd "$TMP" && bash scripts/check-pins.sh >/dev/null 2>&1); then
   printf '  %-44s %s\n' "H check-pins.sh 拒绝 version=1" "!! 静默接受（单独跑即假绿）"; FAILED=$((FAILED + 1))
 else
   printf '  %-44s %s\n' "H check-pins.sh 拒绝 version=1" "ok"
+fi
+
+# H5：**结构合法、但组件数为 0** 的目录——与上面四条**不同的一档**：那几条是"看不懂
+# 这个目录"，这一条是"看懂了，但里面一个组件都没有"。`components: []` 完全合法，
+# 于是 check-licenses.mjs 会 rc=0 并打印「✓ 未发现 copyleft」——**什么都没查却说 OK**。
+# 门禁不是报告器：查不了就不许说通过（与 T7 的 check-pins 假绿、T8 的空计划断言同一条纪律）。
+# ⚠️ 必须放在 H 组**最后**：它会覆盖 catalog（改用 version 2），后面的用例不再受影响。
+printf '{\n  "version": 2,\n  "components": []\n}\n' > "$TMP/config/components.json"
+if (cd "$TMP" && node scripts/check-licenses.mjs >/dev/null 2>&1); then
+  printf '  %-44s %s\n' "H check-licenses.mjs 拒绝空组件集合" "!! 查了 0 个却报通过"; FAILED=$((FAILED + 1))
+else
+  printf '  %-44s %s\n' "H check-licenses.mjs 拒绝空组件集合" "ok"
 fi
 
 echo

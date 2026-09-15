@@ -17,10 +17,14 @@
 #
 # 用法：
 #   bash scripts/check-pins.sh            # 校验（构建/发布门禁；不一致则 exit 1）
-#   bash scripts/check-pins.sh --drift    # 只报告各 branch pin 落后多少提交（恒 exit 0）
+#   bash scripts/check-pins.sh --drift    # 只报告各 branch pin 落后多少提交（**目录校验通过**时恒 exit 0）
 #   bash scripts/check-pins.sh --list     # 枚举 <path>\t<kind>\t<ref>（供 snapshot 生成消费）
 #
-# 退出码：0 通过；1 任一不一致或无法核对
+# ⚠️ 下面那道**目录校验守卫在所有分发之前**，故 `--drift` / `--list` 也受它约束：
+#    目录非法时三个入口**都** exit 1（实测 version=1 时 --drift / --list / 默认 全 rc=1）。
+#    所以 `--drift` 已**不再**是无条件的"恒 exit 0"——它只是"不因 pin 不一致而失败"。
+#
+# 退出码：0 通过；1 任一不一致或无法核对，**或**组件目录未通过校验（含 --drift / --list）
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"

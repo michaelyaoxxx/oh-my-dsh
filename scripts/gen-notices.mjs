@@ -65,19 +65,38 @@ const FULL_NAME = {
 // 到不了这里**——所以这是**纵深防御**，不是当前唯一的堵口。两者都别当成"已测"。
 const fullNameOf = (lic) => (Object.hasOwn(FULL_NAME, lic) ? FULL_NAME[lic] : '（未登记全称）')
 
-// ⚠️ 下列两列的免责标注（「声明，未验证」）**假定**它们在 FIELD_CLASS 里属于 declared 类。
-// 分类若改了，标注就成了一句假话——而 G1 只 grep 一个字面串，**抓不住**这件事。
-// 故显式断言、fail closed：生成物是**对外**的那一份，宁可不生成，也不生成一句不成立的话。
-function assertDeclared(fields) {
-  for (const f of fields) {
+// ⚠️ 免责标注与表头必须与 FIELD_CLASS **双向**一致：加了「（声明，未验证）」后缀的列
+// 必须**真是** declared；**没加**后缀的列必须**不是** declared。
+//
+// 为什么两个方向都要（单向检查曾经漏掉一半）：本表曾把「默认运行时」（runtimeScope，
+// 在 FIELD_CLASS 里是 **operational**——它驱动 `--plan prepare`）与两个 declared 列
+// 并称"未经校验的声明值"。那是在**教读者不信任一个真正起作用的字段**，而生成物是
+// **合规文档**——写错了没人会发现（正是本文件顶部那段说的那个病）。
+// 只查"带后缀的确实是 declared"抓不到它：那一半本来就是对的。
+// 失败即 fail closed：宁可不生成，也不生成一句不成立的话。
+const MARKED_DECLARED = ['sourceAuthority', 'releaseScope'] // 表头里带后缀的两列
+const UNMARKED_OPERATIONAL = ['license', 'runtimeScope'] // 同一张表里不带后缀的两列
+
+function assertColumnClasses() {
+  const cls = (f) => (Object.hasOwn(FIELD_CLASS, f) ? JSON.stringify(FIELD_CLASS[f]) : '未登记')
+  const bad = []
+  for (const f of MARKED_DECLARED) {
     if (!Object.hasOwn(FIELD_CLASS, f) || FIELD_CLASS[f] !== 'declared') {
-      console.error(
-        `✗ 生成物的免责标注假定 ${f} 属于 declared 类，但 FIELD_CLASS 里它是 ` +
-          `${Object.hasOwn(FIELD_CLASS, f) ? JSON.stringify(FIELD_CLASS[f]) : '未登记'}。` +
-          `标注与分类必须一致：要么同步改 render() 里那张表头，要么先改分类。`,
-      )
-      process.exit(1)
+      bad.push(`${f} 带「声明，未验证」后缀，但在 FIELD_CLASS 里是 ${cls(f)}（须为 'declared'）`)
     }
+  }
+  for (const f of UNMARKED_OPERATIONAL) {
+    if (!Object.hasOwn(FIELD_CLASS, f)) {
+      bad.push(`${f} 未在 FIELD_CLASS 里登记分类，却出现在表头里——无从判断该不该加后缀`)
+    } else if (FIELD_CLASS[f] === 'declared') {
+      bad.push(`${f} 在 FIELD_CLASS 里是 'declared'，但表头**没有**加「声明，未验证」后缀——要么补后缀，要么改分类`)
+    }
+  }
+  if (bad.length) {
+    console.error('✗ 生成物的表头标注与 FIELD_CLASS 不一致（合规文档不能带一句不成立的话）：')
+    for (const b of bad) console.error(`    · ${b}`)
+    console.error('  改法：要么同步改 render() 里那张表头，要么先改 FIELD_CLASS 的分类。')
+    process.exit(1)
   }
 }
 
@@ -113,7 +132,12 @@ function render(catalog, urls) {
   // 免责**必须长在生成物上**，不能只活在 config/README.md 的字段字典里：
   // 读者拿到的是这一份（对外的那一份），用「来源」「进制品」这类**事实性表头**，
   // 他无从知道那些列只是 catalog 的声明值。分类只在别处可见 = 读者仍会误解。
-  p('> ⚠️ **「来源」「进制品」「默认运行时」是 catalog 的声明值，未经校验。**')
+  //
+  // ⚠️ 点名的列与加后缀的列**必须**是同一批（都是 declared），不能顺手把某个
+  // operational 字段写进来：那会教读者不信任一个**真的在起作用**的字段。
+  // 「许可证」「默认运行时」都不在此列——前者有词表校验与一致性核对，后者驱动
+  // `--plan prepare`（见 FIELD_CLASS）。assertColumnClasses() 双向钉住这件事。
+  p('> ⚠️ **「来源」「进制品」是 catalog 的声明值，未经校验。**')
   p('> 其中「进制品」对应的 `releaseScope` 目前**没有行为消费者**（制品链尚未实现）——')
   p('> 它记录意图，不构成保证。字段分类见 [config/README.md](config/README.md)。')
   p()
@@ -185,7 +209,7 @@ function render(catalog, urls) {
   return L.join('\n')
 }
 
-assertDeclared(['sourceAuthority', 'releaseScope'])
+assertColumnClasses()
 
 const catalog = loadCatalogValidated()
 const expected = render(catalog, gitmodulesUrls())

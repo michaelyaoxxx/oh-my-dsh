@@ -23,10 +23,10 @@
 //
 // 退出码：0 通过；1 校验失败（**含 --list / --plan**：两个查询入口都先校验再查询）
 
-import { readFileSync, existsSync, realpathSync } from 'node:fs'
+import { readFileSync, existsSync, realpathSync, statSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
-import { fileURLToPath, pathToFileURL } from 'node:url'
-import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { dirname, join, isAbsolute } from 'node:path'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CATALOG = join(ROOT, 'config/components.json')
@@ -240,20 +240,54 @@ const BUILDABLE_ENTRY = /\.(?:[cm]?js|jsx|[cm]?ts|tsx)$/
 //
 // ——而那些文件**就在那儿**（rsync 过来的），只是 `git ls-files` 跑不了。
 //
-// ⚠️ 判据必须**具体**：只有「该目录**没有 git 元数据**」才算 unknown。
+// ⚠️ 判据必须**具体**：只有「该目录**没有可用的** git 元数据」才算 unknown。
 //    别写成"git 报错就当查不了"——那会把真正的"未被跟踪"也吞掉，而拦下它正是本检查
 //    存在的理由（E1/E3 钉的就是"确认未被跟踪必须拒"）。
-// `existsSync` 对 `.git` 是**目录**（普通检出）与**文件**（子仓的 gitlink）都成立，故不判类型。
+//
+// **「没有可用的元数据」是两档，都要盖住**（漏掉第二档，它就会退化成"确认未被跟踪"，
+// 于是又输出那句未经验证的"组件是坏的"）：
+//   ① 根本没有 —— `.git` 不存在（rsync 出来的树；夹具 E9）
+//   ② 有但**不可用** —— `.git` 是**文件**（子仓 / worktree 的 gitlink），内容形如
+//      `gitdir: <path>`，而那个 path **不存在**（工作区被搬走后 `.git/modules` 那侧没跟过来、
+//      或被清理）。夹具 E11。
+// 判据取"`.git` 是目录（普通检出）/ 是文件且其 `gitdir:` 指向**存在**的东西"——
+// 两条都是**可判定的具体事实**，不是"跑一下 git 试试看报不报错"。
 const GIT_TRACKED = 'tracked'
 const GIT_UNTRACKED = 'untracked'
 const GIT_UNKNOWN = 'unknown'
 
-// 该目录有没有 git 元数据。**这是 unknown 的唯一判据**，也是组件级"能不能判"的判据；
-// 两处共用它，免得同一个事实写出两个副本（本仓一路在治的病）。
-const hasGitMetadata = (dir) => existsSync(join(dir, '.git'))
+// 解析 `.git` 指向的 git 目录；取不到（不存在 / 不是 gitlink 格式 / 目标不存在）返回 null。
+// 边界（有意）：只判**存在性**，不验它是否真是一个完整的 git 目录（有没有 HEAD/objects）
+// ——那会把判据变成"跑一下 git 试试"，正是本节开头禁止的形态。保守方向是安全的：
+// 拿不准 ⇒ unknown ⇒ 计入 skipped，而**不会**去指控某个组件"坏了"。
+function usableGitDir(dir) {
+  const dotGit = join(dir, '.git')
+  let st
+  try {
+    st = statSync(dotGit)
+  } catch {
+    return null // ① 根本没有元数据
+  }
+  if (st.isDirectory()) return dir // 普通检出：`.git` 就是目录本身
+  let text
+  try {
+    text = readFileSync(dotGit, 'utf8') // ② 子仓 / worktree：`.git` 是 gitlink 文件
+  } catch {
+    return null
+  }
+  const m = /^gitdir:[ \t]*(.+?)[ \t]*$/m.exec(text)
+  if (!m) return null // 文件在、但不是 gitlink 格式（写坏了）
+  // 相对路径按 `.git` 文件**所在目录**解析——git 自己就是这么做的
+  const target = isAbsolute(m[1]) ? m[1] : join(dir, m[1])
+  return existsSync(target) ? target : null // 悬空 gitlink ⇒ 不可用
+}
+
+// 「能不能判」的唯一判据。组件级（跳过分类）与入口级（三态）共用它，
+// 免得同一个事实写出两个副本（本仓一路在治的病）。
+const hasUsableGitMetadata = (dir) => usableGitDir(dir) !== null
 
 function trackedState(dir, rel) {
-  if (!hasGitMetadata(dir)) return GIT_UNKNOWN
+  if (!hasUsableGitMetadata(dir)) return GIT_UNKNOWN
   try {
     execFileSync('git', ['-C', dir, 'ls-files', '--error-unmatch', rel], { stdio: 'ignore' })
     return GIT_TRACKED
@@ -271,7 +305,7 @@ function checkMaterialized(components) {
   //    树是完整的，缺的是 git 元数据）。与 tracked() 那条修的是同一件事：
   //    **不得把"查不了"说成某个具体结论**。
   const skipped = [] // 子仓未初始化 / 读不到 package.json
-  const skippedNoGit = [] // 目录在、package.json 可读，但没有 git 元数据（如 rsync 出来的树）
+  const skippedNoGit = [] // 目录在、package.json 可读，但 git 元数据**没有或不可用**（如 rsync 出来的树、悬空 gitlink）
   for (const c of components) {
     if (c.prepareMode === 'none' || c.prepareMode === 'install-only') continue
     const dir = join(ROOT, c.path)
@@ -288,7 +322,7 @@ function checkMaterialized(components) {
     // 说的是一件确定的事，而不是"什么都没读到"。
     // ⚠️ 这个 `git` **只用于"跳过分类/已验计数"**，不用来给下面的判据当开关：
     //    那会是同一个事实的第二个副本，且会让 trackedState() 的第三态变成摆设。
-    const git = hasGitMetadata(dir)
+    const git = hasUsableGitMetadata(dir)
     if (git) checked++
     else skippedNoGit.push(c.name)
 
@@ -330,7 +364,7 @@ function checkMaterialized(components) {
     fail(
       `--require-materialized：${skippedAll.length} 个组件无法在 materialized 阶段校验` +
         `（${skippedAll.join(', ')}）——严格模式下不允许跳过。` +
-        `子仓未初始化的请先 make setup；缺 git 元数据的（如带 --exclude '.git' 的 rsync 树）须换到带 .git 的检出上跑。`,
+        `子仓未初始化的请先 make setup；git 元数据缺失或不可用的（如带 --exclude '.git' 的 rsync 树、悬空的 gitlink）须换到可用的检出上跑。`,
     )
   }
   return { checked, skipped, skippedNoGit }
@@ -486,7 +520,7 @@ function validate(catalog) {
     // 这一类**列出组件名**：在服务器树上可能一次跳掉大半个集合，使用者需要知道
     // **具体哪些没验**（只说个数字，等于把"没验"藏起来）。
     const noGit = mat.skippedNoGit.length
-      ? `；${mat.skippedNoGit.length} 个因缺 git 元数据无法判定（${mat.skippedNoGit.join(', ')}）`
+      ? `；${mat.skippedNoGit.length} 个因 git 元数据不可用而无法判定（${mat.skippedNoGit.join(', ')}）`
       : ''
     console.log(`  （materialized 检查：${mat.checked} 个已验；${mat.skipped.length} 个跳过——子仓未初始化${noGit}${REQUIRE_MATERIALIZED ? '（严格模式，跳过即失败）' : ''}）`)
     const excluded = components.filter((c) => c.runtimeScope === 'excluded')
@@ -595,10 +629,20 @@ function isDirectRun() {
   try {
     return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(entry)
   } catch {
-    // realpath 取不到时（路径不存在、权限不足）**退回字面比较**，而不是判 false：
-    // 判 false 会让 CLI 静默不执行——那正是上面那种 fail-open。字面比较最多误判
-    // "被 import"，那只是把脚本当库用，不会让一次本该发生的校验消失。
-    return import.meta.url === pathToFileURL(entry).href
+    // realpath 取不到（路径不存在、权限不足）⇒ **判不了**。这里取"按直接运行处理"：
+    // 宁可多跑一次校验，也不静默什么都不做。
+    //
+    // ⚠️ 如实说明这个选择的代价（评审实测过，别把它当成"安全的兜底"）：
+    //    本分支当前**不可达**——能执行到这里，说明模块文件与 argv[1] 都真实存在。
+    //    而一旦可达，两种走法**都会出错**，方向相反：
+    //      · 判 false（当作被 import）⇒ CLI **静默 no-op、rc=0**。实测：强制走本分支、
+    //        经 symlink 调用（argv[1] 与 realpath 字面不等）时正是这样，输出为空、
+    //        rc=0 —— 调用方会把"拒绝工作"读成"没有要处理的组件"，是 **fail-open**。
+    //      · 判 true（当作直接运行）⇒ 若真是 import，会**多跑一次参数分发**：
+    //        多打几行摘要，或在 `--list` 下提前 exit 1。**响的错，不是静默的错。**
+    //    本仓的取舍一贯是后者（fail closed：宁可响，不许静默放行），故不改成
+    //    "字面比较"那种看着保守、实则会在 symlink 路径下静默 no-op 的写法。
+    return true
   }
 }
 

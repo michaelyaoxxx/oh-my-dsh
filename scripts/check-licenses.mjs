@@ -34,7 +34,7 @@
 //   node scripts/check-licenses.mjs          # 门禁：发现 copyleft 即 exit 1
 //   node scripts/check-licenses.mjs --list   # 只列判定结果，恒 exit 0
 //
-// 退出码：0 通过；1 发现 copyleft
+// 退出码：0 通过；1 发现 copyleft **或**组件集合为空（查了 0 个不许说通过）
 
 import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -93,6 +93,26 @@ function licenseFileOf(componentDir) {
 }
 
 const catalog = loadCatalog()
+
+// ⚠️ 空组件集合 ⇒ **拒绝报通过**。
+//
+// 这不是"schema 非法"：`components: []` 结构完全合法，loadCatalog() 会放行。
+// 问题是本文件随后会 rc=0 并打印「✓ 未发现 copyleft」——**什么都没查却说 OK**。
+// 本文件是**门禁**，不是报告器：查不了就不许说通过。
+// 与 T7 的 check-pins 假绿、T8 给两个调用方加的空计划断言是同一条纪律
+// （空集会被下游读成"没有需要处理的组件"）。
+// （CI 上它被 check-components.mjs 遮蔽——空集合与 .gitmodules 双向不符，L1 会拒；
+//   但**单独跑就是假绿**，所以门禁自己必须说出来。）
+//
+// 空集合最可能来自：写坏的生成脚本、被截断的编辑、误清空 catalog。
+// 确属刻意清空时请显式调整本门禁，**不要**靠留一个空数组绕过它。
+if (catalog.components.length === 0) {
+  console.error('✗ 组件集合为空——本门禁拒绝在"一个组件都没查"的情况下报通过。')
+  console.error('  这不是 schema 非法（文件结构是合法的），而是**查了 0 个**：最可能来自')
+  console.error('  写坏的生成脚本、被截断的编辑，或误把 catalog 清空。')
+  console.error('  确属刻意清空时请显式调整本门禁（并说明理由），不要靠留一个空数组绕过它。')
+  process.exit(1)
+}
 const listOnly = process.argv.includes('--list')
 let failed = 0
 const warnings = []
