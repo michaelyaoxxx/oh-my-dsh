@@ -1090,7 +1090,8 @@ done <<< "$_excluded"
 - [ ] **Step 4: 跑，确认 F1 通过**
 
 Run: `bash scripts/probe-catalog.sh && make link-plugins`
-Expected: F1 两行 ok；`make link-plugins` 退出码 0、`完成: 已挂载 9 个 bundle`。
+Expected: F1 两行 ok；`make link-plugins` 退出码 0、`完成: 已挂载 <N> 个 bundle`（`<N>` = 实际挂载数，目前 10；**别把数字抄进断言**——组件集合会变），且输出含 `跳过挂载: plugins/dsh-tui`（排除集**非空**才是要点：
+这正是本任务要保的性质——排除集一旦为空，dsh-tui 会被挂进 profile dsh）。
 
 - [ ] **Step 5: 提交**
 
