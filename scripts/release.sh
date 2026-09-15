@@ -10,6 +10,12 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
   exit 1
 fi
 
+# 1.5 离线门禁：与 verify **同一份清单**（唯一事实源 scripts/check-all.sh）。
+#     此前这里只跑 check-pins —— **许可证内容检查被整条绕过**：一个目录与
+#     package.json 都伪装成 MIT、LICENSE 内容却是 GPL 的 tag，可以走 release 路径。
+#     见 docs/reviews/2026-09-15-incremental-design-review.md P1-1。
+bash "$ROOT/scripts/check-all.sh" --offline
+
 # 2. 子模块 pin 与远端一致（分支 pin / tag pin 两种语义）
 #    清单与校验逻辑收敛在 scripts/check-pins.sh —— 与 GitHub Actions 的
 #    verify.yaml、Jenkins 侧共用同一实现，避免三份手工同步（新增插件时漏改一处即静默失守）。

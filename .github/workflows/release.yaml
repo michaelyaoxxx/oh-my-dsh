@@ -25,12 +25,16 @@ jobs:
           cache: pnpm
       # 0. pin 校验（原先缺失：release 只在 verify 里校验过 pin，但 release 由
       #    tag push 独立触发，不经过 verify —— 一个被误推的 tag 会直接建 Release）。
-      - name: Check component pins
+      - name: Release preflight (same offline list as verify) + pins
         run: |
-          node scripts/check-components.mjs
-          # 建 Release 就是**对外分发**的时刻：声明文件此时必须是准的，
-          # 且 AGPL 组件的制品状态必须在发布前被机器确认，而不是靠记忆。
-          node scripts/gen-notices.mjs --check
+          # ⚠️ 用**同一份**离线门禁清单（唯一事实源 scripts/check-all.sh），
+          #    不在这里再维护第二份手工列表。
+          # 此前这里只跑 components + notices + pins，**漏了许可证内容检查
+          # （check-licenses）与门禁回归（probe --strict）**——于是一个「目录与
+          # package.json 都伪装成 MIT、LICENSE 内容却是 GPL」的 tag 仍可能越过
+          # release 路径建出 GitHub Release。见 2026-09-15 incremental review P1-1。
+          # 建 Release 就是**对外分发**的时刻，门禁必须与 verify 同源。
+          bash scripts/check-all.sh --offline
           bash scripts/check-pins.sh
       # 干净构建 + link + 冒烟，通过才建 Release
       - name: Build & smoke
