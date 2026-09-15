@@ -1704,7 +1704,23 @@ EOF
 ```
 Expected: **与 macOS 输出逐行一致**（同一份目录 → 同一份计划，这正是 P0-1 的收口验收）。
 
-> ⚠️ 若该机尚无仓库副本，本步改为：把 `config/components.json` 与 `scripts/check-components.mjs` 两个文件拷到该机的临时目录，跑 `node check-components.mjs --plan prepare`。**只需这两个文件**——查询器零依赖。
+> ⚠️ 若该机尚无仓库副本，本步改为：把 `config/components.json`、`scripts/check-components.mjs`、
+> **`.gitmodules`**——**三个文件**拷到该机的临时目录，跑 `node check-components.mjs --plan prepare`。
+>
+> **⚠️ 这里曾写"只需两个文件（catalog 与查询器）——查询器零依赖"，那是错的**（2026-09-15 实测）：
+> 查询器**零依赖**没错（不读子仓、不联网、不装包），但 `validateCatalog()` 里含
+> **`.gitmodules` 双向集合校验**——`.gitmodules` 是**被校验的输入**，不是依赖。
+> 只传两个文件时工具**抛未捕获异常**（裸栈，而非"缺文件"的干净诊断）：
+>
+> ```
+> Error: Command failed: git config -f .gitmodules --get-regexp ^submodule\..*\.path$
+>     at gitmodulesPaths (check-components.mjs:150:15)
+>     at validateCatalog (check-components.mjs:476:32)
+> ```
+>
+> **"零依赖"与"零输入"是两回事**——把前者读成后者，就会漏掉第三个文件。
+> （该崩溃形态与 T5 的 `NAMED_SELECTORS` 同族：**fail-closed 但诊断形态差**，
+> 已作为 [backlog.md](../../backlog.md) **B12** 登记，不在本批修。）
 
 - [ ] **Step 3: 记录结果**
 

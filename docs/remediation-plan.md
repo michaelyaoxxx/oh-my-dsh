@@ -206,7 +206,11 @@ B 只在某个具体状态被证明有真实迁移需求时才做。
 **范围**：把 [ADR-0005](cicd/adr/0005-component-catalog-lifecycle.md) 从「决策」推到「实现」。
 12 个任务的计划见 [plans/2026-09-15-component-catalog-lifecycle.md](superpowers/plans/2026-09-15-component-catalog-lifecycle.md)，
 实施过程（含每次评审）见 `.superpowers/sdd/2026-09-15-component-catalog-lifecycle/`。
-**提交范围**：`bd7d265..`（49 个提交，ADR 起算）。
+**提交范围**：`bd7d265..`（ADR 起算）。
+⚠️ **条数刻意不写死**——它会漂：此处曾写「**49 个提交**」，终审复核时实测 **54**，
+而写下这句话时 `git log --oneline bd7d265..HEAD | wc -l` 已是 **57**
+（多出的 3 条是并行提交者的可观测平台文档，**与本轮无关**，只是恰好落在同一区间里）。
+要复算就跑上面那条命令；**别把区间长度直接当成"本轮的提交数"读**。
 
 > ⚠️ **本节 T 编号与上方总表的 T 编号不是同一套。** 总表的 T0a-T9 来自 2026-09-14 review
 > 的第二轮整改清单；本节的 T1-T12 是**组件目录这一轮自己的任务切分**。
@@ -277,9 +281,10 @@ Linux x86-64 的构建路径不同）。**只在一个平台验证等于没验�
 | 平台 | 状态 | 说明 |
 | --- | --- | --- |
 | **macOS arm64**（本机） | ✅ **已验证** | 见下「macOS 实测」 |
-| **Linux x86-64**（部署目标） | ❌ **未验证** | 见下「为什么未验证」 |
+| **Linux x86-64**（部署目标） | ✅ **已验证** | 见下「Linux 实测」（⚠️ 只覆盖离线只读检查，不含构建） |
 
-平台实测环境（macOS 侧）：Darwin 25.5.0 arm64 / node v24.3.0 / GNU bash 3.2.57(1)-release。
+平台实测环境：macOS 侧 Darwin 25.5.0 arm64 / node v24.3.0 / GNU bash 3.2.57(1)-release；
+Linux 侧 x86_64 / node v24.18.0 / bash 5.2.21 / `LANG=zh_CN.UTF-8`。
 
 #### macOS arm64：已验证（2026-09-15 本任务实测，非照抄计划）
 
@@ -304,7 +309,10 @@ plugins/loongsuite-observability	source-build
 ```
 
 计划里点名的两行都在：`plugins/dsh-agent-teams	source-build`（**开始**构建）与
-`plugins/dsh-at-file	tracked-prebuilt`（**停止**构建）。`dsh-tui` 不在计划里（`prepareMode: none`）。
+`plugins/dsh-at-file	tracked-prebuilt`（**停止**构建）。`dsh-tui` 不在计划里——
+⚠️ **判据是 `runtimeScope: excluded`，不是 `prepareMode: none`**（具名选择器 `prepare`
+展开为 `runtime:required`）。两者因正交不变量而**等价**，故此前写的归因**不产生错结论**，
+但**写错了那一层**：计划认的是「属不属于运行时」，不是「怎么准备」。
 **连跑两次逐字节一致**（`diff` 无输出）——同一份目录 → 同一份计划。
 
 `--require-materialized` 实测 `rc=0`，输出 `10 个已验；0 个跳过`（11 个组件减去
@@ -318,17 +326,48 @@ plugins/loongsuite-observability	source-build
 > `package.json` / `cordis.patch.yml` 这类**构建从不写**的 manifest；按构建产物判**恰好 3 个**。
 > **数字与实现一致。**
 
-#### Linux x86-64：未验证，以及为什么
+#### Linux x86-64：✅ 已验证（2026-09-15 在真实 Linux 主机上实跑，用户已授权）
 
-**未验证——不是"按设计应该没问题"。** 缺的**不是手段，是授权**：
+> **为什么这里曾长期写着"未验证"**：在远端主机上写文件（哪怕只是临时目录）属
+> [AGENTS.md](../AGENTS.md)「操作授权边界」里**必须由用户显式授权**的动作，
+> 所以当时**不是"按设计应该没问题"，而是"一笔没跑"**。授权到位后一次跑完，结果如下。
 
-在远端主机上写文件（哪怕只是临时目录）属 [AGENTS.md](../AGENTS.md)「操作授权边界」里
-**必须由用户显式授权**的动作。控制器已在等用户确认目标机，**拿到确认前不连任何远端**。
+远端环境：Linux **x86_64** / node **v24.18.0** / bash **5.2.21** / `LANG=zh_CN.UTF-8`。
+传输方式：**`git archive HEAD | ssh tar -x`** ⇒ 传过去的是**完整跟踪树**，
+但 ⚠️ **不含 submodule 内容、也没有 `.git`**——这一点直接决定下表最后一行的**期望值**。
 
-（本机也不能旁路验证：无 docker/podman/lima，且 macOS 上**没有 `gsed`**——
-`which gsed` 无命中，故 GNU sed 的行为在本机**无法**验证。）
+| 命令 | 远端结果 |
+| --- | --- |
+| `check-components.mjs --plan prepare` | **rc=0，与 macOS 逐行一致（各 10 行）** ← **核心验收** |
+| `probe-catalog.sh --strict` | **rc=0**（无 `!!`；**B5 在 GNU sed 下真正执行了变异**） |
+| `probe-license-gate.sh --strict` | **rc=0** |
+| `gen-notices.mjs --check` | **rc=0** |
+| `check-all.sh --offline` | **rc=0** |
+| `check-all.sh --offline --require-materialized` | **rc=1**（**预期**：这棵树里没有 submodule） |
 
-**待授权后一次跑完的确切命令**（⚠️ 真实主机名不得入库，用 `<host>` 占位）：
+**这一次同时关闭两条：**
+
+1. **双平台计划一致性（P0-1 收口）——已验证。** 远端输出与上面 macOS 的 **10 行逐行一致**。
+   验收判据是「同一份 `config/components.json` → 同一份计划，两个平台都成立」——
+   **成立**。若给出不同计划，说明「决策来自目录」这件事还没真正做到。
+2. **GNU sed 那一行——从推断升级为实测。** 见下「同批登记 ①」：此前只能给到
+   「按分析无方言问题，**但那是推断**」；现在 `probe-catalog.sh --strict` 在 **GNU sed** 上
+   **rc=0**，且 **B5 真的执行了变异**（不是空跑一次 sed）。
+
+> ⚠️ **最后一行的 rc=1 是"对的"，不是回归。** 那棵树里**没有 submodule**
+> （`git archive` 不含 gitlink 内容）⇒ 严格模式下「无法判定」即失败。
+> **同一棵树、带不带 `--require-materialized`，结论从 rc=0 翻成 rc=1**——
+> 这正是 I-1 那条 fail-open 的形态，也顺带说明 `scripts/release.sh` 为什么必须带上它。
+
+**仍然没验的（别把上表读大成"Linux 侧全绿"）：**
+
+- **`make setup` 在 Linux 上的端到端**（`dsh-agent-teams` **开始**构建 / `dsh-at-file` **停止**构建的
+  **真机构建**、以及原生依赖按平台重编）。上表**全是离线、只读的检查**——没有安装、没有构建。
+  本仓硬约束「原生依赖必须按平台各自构建」在 Linux 上**仍未实测**。
+- **部署路径**（`make deploy` / `remote-install.sh` 端到端）——须硬门槛（Linux + 部署目录 + root），
+  且属**显式授权**动作，本轮未做。
+
+**复现用的命令**（⚠️ 真实主机名不得入库，用 `<host>` 占位）：
 
 ```bash
 ssh <host> 'bash -s' <<'EOF'
@@ -338,35 +377,53 @@ node scripts/check-components.mjs --plan prepare
 EOF
 ```
 
-**验收判据**：输出必须与上面 macOS 的 **10 行逐行一致**（同一份 `config/components.json`
-→ 同一份计划）。这正是 09-15 review **P0-1**「同一份 manifest 两个消费者相反解释」的
-**收口验收**——若两个平台给出不同计划，说明「决策来自目录」这件事**还没真正做到**。
-
-> 若该机**没有仓库副本**：本步无需完整仓库——把 `config/components.json` 与
-> `scripts/check-components.mjs` **两个文件**拷到该机临时目录，跑
-> `node check-components.mjs --plan prepare` 即可。**查询器零依赖**（不读子仓、不联网、不装包），
-> 这也是这一条**不需要**建环境就能验的原因。
+> **若该机没有仓库副本**：本步**不需要**完整仓库——把
+> `config/components.json`、`scripts/check-components.mjs`、**`.gitmodules`**
+> **三个文件**拷到该机临时目录，跑 `node check-components.mjs --plan prepare` 即可。
+>
+> ⚠️ **`.gitmodules` 不能少，这里曾写错成"只需两个文件"**：`validateCatalog()` 里含
+> **`.gitmodules` 双向集合校验**（目录 ↔ submodule 清单必须互相覆盖），少了它查询器会**抛未捕获异常**、
+> 直接掉进 `git config -f .gitmodules …` 的报错栈，而不是给出干净诊断。
+> **"查询器零依赖"这句话本身没错**（不读子仓、不联网、不装包）——错的是把"零依赖"读成了
+> "不需要 `.gitmodules`"：那是**被校验的输入**，不是依赖。
+> 这条也是 [backlog.md](backlog.md) **B12** 的来源（缺文件时应干净报错，不该抛裸栈）。
 
 #### 同批登记的两条（都与 T12 相关）
 
 | # | 事项 | 现状 | 下一步 |
 | --- | --- | --- | --- |
-| **①** | **`probe-catalog.sh` 的 sed 写法在 GNU sed 下的行为** | **按分析无方言问题——但那是推断，不是验证**。实测：`scripts/probe-catalog.sh` 只有两处 `sed`（`:299`、`:676`），**均为 POSIX BRE**（无 `-E` / `-r`，只用 `^` `$` 锚点 + 字面量 + `/` 分隔符，**一个 GNU 扩展都没用**：无 `\+`、`\?`、`\|`、`\b`、`\w`、`\s`，替换串里无 `&`、无反斜杠）；且**全仓 `scripts/` 与 `deploy/` 无任何 `sed -i`**（`grep -rn "sed -i" scripts/ deploy/` 零命中）——而 `-i` 正是 BSD/GNU 的**唯一分歧点**，脚本刻意改为 `> "$VALIDATOR.mut"` 再 `mv` 绕开 | 在 Linux 上跑一次 `bash scripts/probe-catalog.sh` 即可**彻底关闭**（B5 会**真正执行变异**，比空跑一次 sed 更有说服力）。已列入 T12 待授权清单 |
+| **①** | **`probe-catalog.sh` 的 sed 写法在 GNU sed 下的行为** | **✅ 已关闭（2026-09-15 Linux 实跑，见「下一步」列）**——以下是**关闭前**的分析记录，保留是因为它示范了"分析能给出什么、不能给出什么"：**按分析无方言问题——但那是推断，不是验证**。实测：`scripts/probe-catalog.sh` 只有两处 `sed`（`:299`、`:676`），**均为 POSIX BRE**（无 `-E` / `-r`，只用 `^` `$` 锚点 + 字面量 + `/` 分隔符，**一个 GNU 扩展都没用**：无 `\+`、`\?`、`\|`、`\b`、`\w`、`\s`，替换串里无 `&`、无反斜杠）；且**全仓 `scripts/` 与 `deploy/` 无任何 `sed -i`**（`grep -rn "sed -i" scripts/ deploy/` 零命中）——而 `-i` 正是 BSD/GNU 的**唯一分歧点**，脚本刻意改为 `> "$VALIDATOR.mut"` 再 `mv` 绕开 | **已执行（2026-09-15）**：Linux 上 `probe-catalog.sh --strict` → **rc=0**、无 `!!`，且 B5 的**变异确实执行**了——比空跑一次 `sed` 更有说服力 |
 | **②** | **`check-pins.sh` 无重试** | 每处 `git -C "$sub" fetch origin …`（`scripts/check-pins.sh:73`、`:93`）都是**一次性**尝试，失败即 `exit 1` ⇒ **11 条 pin 任一抖一下就整项失败**（实测 `bash scripts/check-pins.sh --list` → **tag 9 条 / branch 2 条 = 11 行**）。已实测多次：失败组件**每次游走**（同一时段裸 `fetch` 成功而 `check-pins.sh` 偶发失败）⇒ 定性为**环境抖动**，不是代码缺陷 | 加有限次重试（退避）。**记入 [backlog.md](backlog.md) 候选，不在本计划范围** |
 
 > ⚠️ **①的两处 `sed` 与 `-i` 的零命中是本任务实测**（`grep -n` 的原始输出），
-> 但「GNU sed 下等价」这一步**只能由 Linux 上的实跑给出**——本机没有 `gsed`，
+> 而「GNU sed 下等价」当时**只能由 Linux 上的实跑给出**——本机没有 `gsed`，
 > 装软件不在授权内。**别把"分析过"读成"验过"。**
+>
+> ✅ **现在是"验过"了**（2026-09-15 Linux 实跑，rc=0）。但**这条方法学结论不变**：
+> 它之所以能升级，**只是因为补跑了那一次**，不是因为分析变强了。
+> 分析给出的是**该不该跑**，不是**跑的结果**。
 >
 > ⚠️ **②里"抖动"与"真实的 pin 不一致"当前在退出码上不可分辨**（两者都是 `1`，
 > 只有 stderr 文案不同）。要的是把两者区分开，而不只是"让失败的能重试"。
 
-**附带发现（本任务读文档时看到，未改）：** `config/README.md` 的「一条只报警告、不阻断的」
-一节（materialized 阶段不变量）写作「（**10 个**组件里触发 6 个）」，而
+**附带发现（T12 读文档时看到，当时未改；⚠️ 已由后继提交 `b87a933` 修掉）：** `config/README.md` 的「一条只报警告、不阻断的」
+一节（materialized 阶段不变量）当时写作「（**10 个**组件里触发 6 个）」，而
 `scripts/check-components.mjs:221` 的同一句注释写作「**11 个**组件里 6 个喊」。
 本任务独立复核的实测值是：**11 个组件中 8 个是 `source-build`**，按全入口集判会喊 **6** 个、
 按构建产物判喊 **3** 个 ⇒ **README 的"10 个"是过期数字**（应为 11）。
-该处不是「实现状态」表，不在本轮 T12 的改动范围内，**留待下次同步**。
+
+> **收口说明（2026-09-15 复核补记）**：`b87a933`（commit message 原文：「T12 发现
+> config/README.md 写「10 个组件里触发 6 个」…README 的 10 是过期数字」）已修掉该处，
+> 且**没有**简单地把 `10` 换成 `11`——那样下次照样漂（本计划已因写死数字踩过四次）。
+> 改为**标注测量时间与当时样本量**的快照措辞，并把 README / ADR / `check-components.mjs`
+> 三处口径统一。
+>
+> ⚠️ **本条留在正文里，是因为它示范了本节最容易犯的那类错**：条目登记的是"未改"，
+> 而**改动发生在之后**，于是"还欠什么"的清单里挂着一件**已经做完**的事。
+> 本轮收尾有**三条同源**（连同 ADR-0005 的偏离记录 D3、以及上面这条"提交范围"的数字）：
+> **后几个提交互相修掉了对方登记的"未收口项"，但"未收口"侧的文字没回写。**
+> 台账自己的纪律是「完成即删除对应条目」——留一条已完成的在"未收口"里，
+> 和留一条过期的状态表一样危险：**下一个人会去重做一件已经做完的事。**
 
 ---
 

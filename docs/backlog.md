@@ -36,6 +36,8 @@
 
 | B11 | **两个调用方各持一份逐字节相同的「动作原语」（11 个函数）** | `scripts/setup.sh` 与 `deploy/remote-install.sh` 里从 `plugin_install` 起的动作原语段**逐字节相同**（含带分支的 35 行 `plugin_install`），**没有任何门禁保证它们同步**。`prepare-executor.sh` 只统一了**决策**（`case "$prepareMode"` 全仓仅一份），**动作**仍是两份。**成本已经发生过一次**：`ret=$?` 的 fail-open 必须修两次才对齐（`a4a3808` + `a25af8b`） | 把动作原语也收进共用实现，让两处只剩**真正的**环境差异（install 策略 `frozen`/`nonfrozen`、harness 的 `CI=true`）。⚠️ 这是**接口变更**，该单独走 ADR 级思考，不要在收尾阶段顺手动。当前只在两处各留了互相指向的注释作**提醒**（不是装置，挡不住漂移） |
 
+| B12 | **缺 `.gitmodules` 时 `check-components.mjs` 抛裸栈，而不是干净报错** | 2026-09-15 实测：把 `config/components.json` 与 `scripts/check-components.mjs` 拷到临时目录（**没有 `.gitmodules`**）跑 `--plan prepare`，得到未捕获异常而非"缺文件"的提示：`Error: Command failed: git config -f .gitmodules --get-regexp ^submodule\..*\.path$` at `gitmodulesPaths (check-components.mjs:150:15)` / `validateCatalog (:476:32)`。根因是 `validateCatalog()` 里含 **`.gitmodules` 双向集合校验**——`.gitmodules` 是**被校验的输入**，不是依赖。**fail-closed 的方向是对的**（不会给出错误结论），但诊断形态差：症状与 T5 的 `NAMED_SELECTORS` 崩溃**同族**——"查不了"报成了"坏了/崩了" | 在 `gitmodulesPaths()` 里判「`.gitmodules` 不存在 / `git config` 非零」并给干净报错（缺什么、下一步做什么）。⚠️ 不在收尾批修（`scripts/` 已定稿） |
+
 ## 暂缓（**有意不做，非遗漏**）
 
 > 与「已收口」的区别：这些**没做完**，是按决策**不做**。列在这里是为了让后来者知道
