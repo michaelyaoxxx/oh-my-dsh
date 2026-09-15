@@ -1408,7 +1408,8 @@ EOF
 - Modify: `scripts/gen-notices.mjs`
 - Modify: `scripts/check-licenses.mjs`（改为复用 validated loader）
 - Modify: `scripts/check-pins.sh`（读目录前先验证，fail-closed）
-- Modify: `scripts/probe-catalog.sh`（加用例断言生成物含免责标注 + 所有读取方 fail-closed）
+- Modify: `scripts/check-components.mjs`（`tracked()` 改成三分，见 Step 3b）
+- Modify: `scripts/probe-catalog.sh`（加用例断言生成物含免责标注 + 所有读取方 fail-closed + 三分语义）
 
 **Interfaces:**
 - Consumes: `check-components.mjs` 的具名导出 `FIELD_CLASS`。
@@ -1516,7 +1517,36 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 }
 ```
 
-- [ ] **Step 4: 加免责标注**
+- [ ] **Step 3b: `tracked()` 改成三分——别把「查不了」说成「坏了」**
+
+> **背景（T9 实测发现，不是本任务的问题，但同一主题）**：`scripts/deploy-remote.sh:184` 的 rsync 带
+> `--exclude '.git'`，服务器树**没有 git 元数据**。用同一套 rsync 参数造的忠实副本上，
+> 当前输出是：
+> ```
+> ✗ 组件 dsh-automation 的 prepareMode=tracked-prebuilt，但声明的入口 lib/index.js
+>   **未被 git 跟踪**——fresh clone 上该组件是坏的
+> ```
+> **这是把"查不了"说成了"坏了"**：那些文件**就在那儿**（rsync 过来的），只是 `git ls-files` 无法运行。
+> **这正是 AGENTS.md 禁止的形态**（把推断写成已验证）——只不过这次是**工具对用户**说的。
+
+**根因**：`tracked()` 把**任何** git 失败都当作"未被跟踪"（`catch { return false }`）。
+真正的语义是**三分**：**已跟踪 / 确认未被跟踪 / 查不了**。
+
+**改法**：`tracked()` 返回三态（或用两个函数），并在调用点区分：
+- **查不了**（该目录没有 git 元数据，如 `!existsSync(join(dir, '.git'))`）⇒ 与"子仓未初始化"**同类**，
+  计入 `skipped`，**不得**输出"fresh clone 上该组件是坏的"这种未经验证的结论。
+- **确认未被跟踪** ⇒ 照旧 `fail()`（这是真的坏）。
+- `--require-materialized` 下 **skip 仍然即失败**（严格语义不变）。
+
+**加夹具用例**（E 组）：
+- **E9**：子仓存在、`package.json` 可读、但**没有 `.git`** ⇒ 非严格模式**应通过且计入 skipped**，
+  且输出**不得**出现"未被 git 跟踪"或"fresh clone 上该组件是坏的"字样。
+- **E10**：同一形态 + `--require-materialized` ⇒ **必须失败**（严格下 skip 即失败）。
+
+⚠️ **不要**用"看起来像 git 错误就跳过"这种宽泛判据——那会把真正的"未被跟踪"也吞掉。
+判据要**具体**：该目录**不存在 git 元数据**才算"查不了"。
+
+
 
 `gen-notices.mjs` 的 `render()` 里，把组件清单表头改为：
 
