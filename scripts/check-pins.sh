@@ -25,6 +25,20 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 
+# 先过校验器再读目录：本脚本只读 path/pinPolicy/pinRef，直连 require() 会让
+# **未知 schema 版本**的目录静默通过。fail-closed。
+#
+# ⚠️ 顺序刻意放在**最前**：版本非法时**根本不联网**（下面的 fetch 一条都不跑）。
+# ⚠️ 只丢 stdout（机器接口）、**不丢 stderr**：校验器的 ✗ 理由必须让用户看见，
+#    下面那句"原因见上"里的"上"指的就是它。
+# 背景（T7 实现者实测）：此前单独跑本脚本、catalog 读不出来时会打印
+# 「✓ 全部 pin 校验通过」且 rc=0——在 CI / release 路径上它被同组的
+# check-components.mjs 遮蔽（不会整体假绿），但**单独跑就是假绿**。
+if ! node scripts/check-components.mjs >/dev/null; then
+  echo "错误: 组件目录未通过校验，check-pins 拒绝在其上工作（原因见上）。" >&2
+  exit 1
+fi
+
 # 读清单：config/components.json → 每行 <path>\t<kind>\t<ref>
 read_pins() {
   node -e '

@@ -23,9 +23,9 @@
 //
 // 退出码：0 通过；1 校验失败（**含 --list / --plan**：两个查询入口都先校验再查询）
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync, realpathSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -105,7 +105,23 @@ const warn = (msg) => { console.error(`  ⚠️  ${msg}`) }
 
 const SCHEMA_VERSION = 2
 
-function loadCatalog() {
+// ── 导出给其它 catalog 读取方的 loader：**两个**，用途不同，别混用 ─────────────
+//
+// 两者的差别是「要读懂」还是「要认证」：
+//   loadCatalog()           → 只要求**能被理解**：JSON 可解析 + schema 版本相符 + 形状对。
+//   loadCatalogValidated()  → 还要求**合法**：跑完整套不变量（ENUM / 双向集合 / 正交约束）。
+//
+// ⚠️ 选哪一个不是风格问题，会改变**门禁之间的耦合**，故按用途定：
+//   · 生成物 / 合规文档（gen-notices.mjs）用 **validated**：它要把 license 之类的值
+//     渲进对外文档，目录不合法时产出的一定是**看似正常**的错东西。
+//   · 内容层门禁（check-licenses.mjs）用 **loadCatalog()**：它读的是 <组件>/LICENSE*
+//     文件，**与目录的其余不变量无关**。若让它要求"目录完全合法"，它就会在 L1 拒绝的
+//     任何目录上一起拒绝——两道门从此**耦合**。而 probe-license-gate.sh 的全部价值
+//     就在于**分开**测这两道门（它头几行就写着"两道门分别判定，不合并成一列"）。
+//     实测（本任务）：用 validated 时，夹具 A1（目录声明 GPL-3.0）的 L2 由 GAP 翻成
+//     CAUGHT——那不是"内容层拦住了 copyleft"，而是"内容层拒绝工作"，矩阵会把前者
+//     当成后者读。故这里是**分层**，不是放水：版本不符仍然直接拒绝。
+export function loadCatalog() {
   let raw
   try {
     raw = JSON.parse(readFileSync(CATALOG, 'utf8'))
@@ -212,13 +228,50 @@ function declaredEntries(pkg) {
 // 真出现时按本节注释的理由扩展本常量，而不是退回"全入口集"。
 const BUILDABLE_ENTRY = /\.(?:[cm]?js|jsx|[cm]?ts|tsx)$/
 
+// ── 「这个入口被 git 跟踪吗」的判据：**三分**，不是布尔 ─────────────────────────
+//
+// 为什么不是布尔：`git ls-files` 有**两种**不同的失败——「确认没被跟踪」与「根本查不了」。
+// 把它们并成一类，就是把**查不了说成坏了**（AGENTS.md 禁止的形态，只不过这次是
+// **工具对用户**说的）。触发场景是实测的、不是假想：scripts/deploy-remote.sh 的 rsync 带
+// `--exclude '.git'`，服务器树上**没有任何 git 元数据**；在那棵树上跑校验，旧实现输出
+//
+//   ✗ 组件 X 的 prepareMode=tracked-prebuilt，但声明的入口 lib/index.js
+//     **未被 git 跟踪**——fresh clone 上该组件是坏的
+//
+// ——而那些文件**就在那儿**（rsync 过来的），只是 `git ls-files` 跑不了。
+//
+// ⚠️ 判据必须**具体**：只有「该目录**没有 git 元数据**」才算 unknown。
+//    别写成"git 报错就当查不了"——那会把真正的"未被跟踪"也吞掉，而拦下它正是本检查
+//    存在的理由（E1/E3 钉的就是"确认未被跟踪必须拒"）。
+// `existsSync` 对 `.git` 是**目录**（普通检出）与**文件**（子仓的 gitlink）都成立，故不判类型。
+const GIT_TRACKED = 'tracked'
+const GIT_UNTRACKED = 'untracked'
+const GIT_UNKNOWN = 'unknown'
+
+// 该目录有没有 git 元数据。**这是 unknown 的唯一判据**，也是组件级"能不能判"的判据；
+// 两处共用它，免得同一个事实写出两个副本（本仓一路在治的病）。
+const hasGitMetadata = (dir) => existsSync(join(dir, '.git'))
+
+function trackedState(dir, rel) {
+  if (!hasGitMetadata(dir)) return GIT_UNKNOWN
+  try {
+    execFileSync('git', ['-C', dir, 'ls-files', '--error-unmatch', rel], { stdio: 'ignore' })
+    return GIT_TRACKED
+  } catch { return GIT_UNTRACKED }
+}
+
 // materialized 阶段：需要读子仓。子仓未初始化时**跳过并计数**——
 // 本检查不得引入「先跑 make setup」的前置依赖。
 // 但 --require-materialized 下，skip 本身即失败：CI 与 release 用它，
 // 否则 fresh clone 上可以一项都不查就通过（fail-open）。
 function checkMaterialized(components) {
   let checked = 0
-  const skipped = []
+  // ⚠️ **两类跳过分开计数**，因为成因不同、可执行的动作也不同。合成一条会逼出一句
+  //    在某一类上**不成立**的话（"子仓未初始化"在 rsync 出来的服务器树上就是假的：
+  //    树是完整的，缺的是 git 元数据）。与 tracked() 那条修的是同一件事：
+  //    **不得把"查不了"说成某个具体结论**。
+  const skipped = [] // 子仓未初始化 / 读不到 package.json
+  const skippedNoGit = [] // 目录在、package.json 可读，但没有 git 元数据（如 rsync 出来的树）
   for (const c of components) {
     if (c.prepareMode === 'none' || c.prepareMode === 'install-only') continue
     const dir = join(ROOT, c.path)
@@ -229,20 +282,27 @@ function checkMaterialized(components) {
       skipped.push(c.name)
       continue
     }
-    checked++
-    const tracked = (rel) => {
-      try {
-        execFileSync('git', ['-C', dir, 'ls-files', '--error-unmatch', rel], { stdio: 'ignore' })
-        return true
-      } catch { return false }
-    }
+    // git 元数据缺失 ⇒ **与"子仓未初始化"同类**：计入 skipped，且**不得**据此宣称
+    // 组件坏了（那些文件可能一个不少，只是 `git ls-files` 跑不了）。
+    // 判据刻意放在 package.json 读成功**之后**：走到这里说明目录**在**，故"缺元数据"
+    // 说的是一件确定的事，而不是"什么都没读到"。
+    // ⚠️ 这个 `git` **只用于"跳过分类/已验计数"**，不用来给下面的判据当开关：
+    //    那会是同一个事实的第二个副本，且会让 trackedState() 的第三态变成摆设。
+    const git = hasGitMetadata(dir)
+    if (git) checked++
+    else skippedNoGit.push(c.name)
+
+    // 下面两条判据都不依赖 git（`source-build ⇒ 须有 scripts.build` 与子仓的 git 状态
+    // 无关），故不因"另一个判据查不了"而一起放过——那才是 fail-open。
+    // 「查不了」（GIT_UNKNOWN）时**不猜**：它既不算 tracked 也不算 untracked，
+    // 于是两条判据都自然不生效，而该组件已经在上面的 skippedNoGit 里被记了一笔。
     if (c.prepareMode === 'tracked-prebuilt') {
       const entries = declaredEntries(pkg)
       if (!entries.length) {
         fail(`组件 ${c.name} 的 prepareMode=tracked-prebuilt，但其 package.json 未声明任何入口（main/types/exports）——无物可验`)
       }
       for (const e of entries) {
-        if (!tracked(e)) {
+        if (trackedState(dir, e) === GIT_UNTRACKED) {
           fail(`组件 ${c.name} 的 prepareMode=tracked-prebuilt，但声明的入口 ${e} **未被 git 跟踪**——fresh clone 上该组件是坏的`)
         }
       }
@@ -259,16 +319,21 @@ function checkMaterialized(components) {
     //    例子**整个漏掉。也**不能**把声明的元数据（package.json / cordis.patch.yml）算进来：
     //    它们不是构建产物，算进来就是对不会被弄脏的组件喊狼来了（理由见 BUILDABLE_ENTRY）。
     if (c.prepareMode === 'source-build') {
-      const dirtyable = declaredEntries(pkg).filter((e) => BUILDABLE_ENTRY.test(e) && tracked(e))
+      const dirtyable = declaredEntries(pkg).filter((e) => BUILDABLE_ENTRY.test(e) && trackedState(dir, e) === GIT_TRACKED)
       if (dirtyable.length) {
         warn(`组件 ${c.name} 是 source-build，但入口 ${dirtyable.join(', ')} 已被 git 跟踪——构建可能弄脏 submodule，进而触发部署的快照保真检查`)
       }
     }
   }
-  if (skipped.length && REQUIRE_MATERIALIZED) {
-    fail(`--require-materialized：${skipped.length} 个组件的子仓未初始化（${skipped.join(', ')}）——严格模式下不允许跳过。请先 make setup 或确保 checkout 带 submodule。`)
+  const skippedAll = [...skipped, ...skippedNoGit]
+  if (skippedAll.length && REQUIRE_MATERIALIZED) {
+    fail(
+      `--require-materialized：${skippedAll.length} 个组件无法在 materialized 阶段校验` +
+        `（${skippedAll.join(', ')}）——严格模式下不允许跳过。` +
+        `子仓未初始化的请先 make setup；缺 git 元数据的（如带 --exclude '.git' 的 rsync 树）须换到带 .git 的检出上跑。`,
+    )
   }
-  return { checked, skipped }
+  return { checked, skipped, skippedNoGit }
 }
 
 // 校验 FIELD_CLASS **自身**（schema 级元数据），与组件数据无关，故在组件循环之前跑。
@@ -385,8 +450,22 @@ function validateCatalog(catalog) {
   return !process.exitCode
 }
 
-// validate() = catalog 阶段（上面那个）+ materialized 阶段（需读子仓的部分）。
+// 供其它生成器复用的**已校验** loader。直连 JSON.parse 会让生成物
+// 在目录非法时照样产出——而生成物是**对外**的那一份。
 //
+// 为什么导出的是「读 + 校验」而不是让调用方自己 `loadCatalog() + validateCatalog()`：
+// 那是同一条不变量的两处副本，只改一边（如将来校验器改名/分阶段）就会让某个读取方
+// **静默退回盲读**——正是本函数要治的病。读取方要的就是"一份合法目录"，给这一个入口。
+//
+// 失败即 `process.exit(1)`（**不是** return null）：调用方是 Bash / node 脚本，
+// 它们只认退出码；返回 null 会诱使调用方 `?? {}` 兜底，那又把 fail-open 请回来了。
+export function loadCatalogValidated() {
+  const catalog = loadCatalog()
+  if (!validateCatalog(catalog)) process.exit(1)
+  return catalog
+}
+
+// validate() = catalog 阶段（上面那个）+ materialized 阶段（需读子仓的部分）。
 // 为什么**不**把 checkLicenseDeclarations 也放进 validateCatalog：它读的是
 // `join(ROOT, c.path, 'package.json')`——**子仓里**的文件，未初始化时读不到。
 // 判据是「会不会读子仓」，不是「要不要联网」；`.gitmodules` 是**主仓**的文件，
@@ -402,7 +481,14 @@ function validate(catalog) {
   if (!process.exitCode) {
     console.log(`✓ 组件目录校验通过：${components.length} 个组件，与 .gitmodules 双向一致`)
     console.log(`  （license 与组件自身声明核对：${lic.checked} 个一致；${lic.skipped} 个跳过——子仓未初始化或无 package.json）`)
-    console.log(`  （materialized 检查：${mat.checked} 个已验；${mat.skipped.length} 个跳过——子仓未初始化${REQUIRE_MATERIALIZED ? '（严格模式，跳过即失败）' : ''}）`)
+    // 两类跳过的**成因不同**，故分行报。合成一句"子仓未初始化"会在 rsync 出来的
+    // 服务器树上说一句不成立的话——那里树是全的，缺的只是 git 元数据。
+    // 这一类**列出组件名**：在服务器树上可能一次跳掉大半个集合，使用者需要知道
+    // **具体哪些没验**（只说个数字，等于把"没验"藏起来）。
+    const noGit = mat.skippedNoGit.length
+      ? `；${mat.skippedNoGit.length} 个因缺 git 元数据无法判定（${mat.skippedNoGit.join(', ')}）`
+      : ''
+    console.log(`  （materialized 检查：${mat.checked} 个已验；${mat.skipped.length} 个跳过——子仓未初始化${noGit}${REQUIRE_MATERIALIZED ? '（严格模式，跳过即失败）' : ''}）`)
     const excluded = components.filter((c) => c.runtimeScope === 'excluded')
     if (excluded.length) console.log(`  （runtimeScope=excluded：${excluded.map((c) => c.name).join(', ')}）`)
   }
@@ -484,38 +570,72 @@ function plan(catalog, selector) {
   }
 }
 
-const args = process.argv.slice(2)
-const catalog = loadCatalog()
-
-// 先校验再查询：`--list` 此前**直接查询、绕过 validate()**，于是一个字段非法的
-// catalog 能让查询器照常输出，调用方据此执行——正是 fail-open。
-// 这不是假想风险，实测过：把某个组件的 runtimeScope 改成非法值（如 "bogus"），修复前
-// `--list prepare` 的 rc=0 且 stdout 为空。而 deploy/remote-install.sh **没有**
-// setup.sh:212 那样的显式前置校验，直接 `PREPARE_LIST="$(node … --list prepare)"`，
-// 靠 `set -euo pipefail` + `$()` 传播退出码兜底——**这条链只在失败返回非 0 时才成立**。
-// 一旦 rc=0 而输出为空，PREPARE_LIST 就是空的 → 每个插件走「跳过」→
-// **部署"成功"却没装东西**。所以守卫必须在**分发之前**，且用 process.exit **立即**终止。
+// 只有**直接运行本文件**时才执行参数分发；被 import 时只提供导出。
 //
-// ⚠️ 守卫**只作用于查询路径**。默认路径由 validate() 跑完整两阶段（catalog 阶段 +
-//    materialized 阶段），若在这里**无条件**先行退出，同一份 catalog 同时有 catalog 阶段
-//    错误与 license 不一致时只会报出**第一条**——用户得改一处、重跑、才看见下一处。
-//    rc 仍是 1（不是 fail-open），掉的是**诊断完整性**。
-//    两条路径的 ✗ 条数都是契约，各有夹具钉住：probe-catalog.sh 的 D11（默认路径 2 条）
-//    与 D12（查询路径 1 条——run_case 的唯一归因判据依赖它）。
-//    别把 process.exit(1) 改成 process.exitCode = 1：那会让查询路径也打印两遍 ✗。
-const wantsQuery = args.includes('--list') || args.includes('--plan')
-if (wantsQuery && !validateCatalog(catalog)) process.exit(1)
+// 为什么必须分开：`check-licenses.mjs` / `gen-notices.mjs` 要复用上面的
+// loadCatalogValidated()，而此前本文件是"顶层直接执行"的脚本——被 import 会连带
+// 执行下面的参数分发（读 argv → 当成自己被传了参数 → 打印/退出），调用方拿到的是
+// **另一个进程的行为**，而不是一个库。
+//
+// ⚠️ 判据必须比 **realpath**，不能只比字面路径——这不是洁癖，是实测的坑：
+//    node 会把**模块 URL** 解析成真实路径，而 `process.argv[1]` 是调用方给的那一串。
+//    macOS 上 `mktemp -d` 给的是 `/var/folders/...`，而 `/var` 是 `-> /private/var`
+//    的 symlink，于是 `node "$PWD/scripts/check-components.mjs"`（**绝对**路径）下两者
+//    逐字符不等 → 守卫把"直接运行"判成"被 import" → 脚本**什么都不做、rc=0**。
+//    这正是 fail-open 的形态，而且是**静默**的：调用方拿到空集，会读成"没有要处理的组件"。
+//    probe-catalog.sh 的 F2/F3 当场变红（消费方拿到空排除集，照样去挂载）。
+//    ⚠️ 换成**相对**路径调用恰好不触发——所以这个坑按调用方式时好时坏，极易漏过。
+//    （原方案是 `import.meta.url === pathToFileURL(process.argv[1]).href`，就栽在这里。）
+//
+// 判据取"两个 realpath 相等"，不用 `argv[1].endsWith('check-components.mjs')` 之类：
+// 后者会把"恰好同名的另一个文件"也算成自己。
+function isDirectRun() {
+  const entry = process.argv[1]
+  if (!entry) return false // `node -e` / REPL：没有入口脚本，当然不是"直接运行本文件"
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(entry)
+  } catch {
+    // realpath 取不到时（路径不存在、权限不足）**退回字面比较**，而不是判 false：
+    // 判 false 会让 CLI 静默不执行——那正是上面那种 fail-open。字面比较最多误判
+    // "被 import"，那只是把脚本当库用，不会让一次本该发生的校验消失。
+    return import.meta.url === pathToFileURL(entry).href
+  }
+}
 
-const li = args.indexOf('--list')
-const pl = args.indexOf('--plan')
-if (li !== -1) {
-  const sel = args[li + 1]
-  if (!sel) { console.error('✗ --list 需要一个选择器，如 ci:test'); process.exit(1) }
-  list(catalog, sel)
-} else if (pl !== -1) {
-  const sel = args[pl + 1]
-  if (!sel) { console.error('✗ --plan 需要一个具名选择器，如 prepare'); process.exit(1) }
-  plan(catalog, sel)
-} else {
-  validate(catalog)
+if (isDirectRun()) {
+  const args = process.argv.slice(2)
+  const catalog = loadCatalog()
+
+  // 先校验再查询：`--list` 此前**直接查询、绕过 validate()**，于是一个字段非法的
+  // catalog 能让查询器照常输出，调用方据此执行——正是 fail-open。
+  // 这不是假想风险，实测过：把某个组件的 runtimeScope 改成非法值（如 "bogus"），修复前
+  // `--list prepare` 的 rc=0 且 stdout 为空。而 deploy/remote-install.sh **没有**
+  // setup.sh:212 那样的显式前置校验，直接 `PREPARE_LIST="$(node … --list prepare)"`，
+  // 靠 `set -euo pipefail` + `$()` 传播退出码兜底——**这条链只在失败返回非 0 时才成立**。
+  // 一旦 rc=0 而输出为空，PREPARE_LIST 就是空的 → 每个插件走「跳过」→
+  // **部署"成功"却没装东西**。所以守卫必须在**分发之前**，且用 process.exit **立即**终止。
+  //
+  // ⚠️ 守卫**只作用于查询路径**。默认路径由 validate() 跑完整两阶段（catalog 阶段 +
+  //    materialized 阶段），若在这里**无条件**先行退出，同一份 catalog 同时有 catalog 阶段
+  //    错误与 license 不一致时只会报出**第一条**——用户得改一处、重跑、才看见下一处。
+  //    rc 仍是 1（不是 fail-open），掉的是**诊断完整性**。
+  //    两条路径的 ✗ 条数都是契约，各有夹具钉住：probe-catalog.sh 的 D11（默认路径 2 条）
+  //    与 D12（查询路径 1 条——run_case 的唯一归因判据依赖它）。
+  //    别把 process.exit(1) 改成 process.exitCode = 1：那会让查询路径也打印两遍 ✗。
+  const wantsQuery = args.includes('--list') || args.includes('--plan')
+  if (wantsQuery && !validateCatalog(catalog)) process.exit(1)
+
+  const li = args.indexOf('--list')
+  const pl = args.indexOf('--plan')
+  if (li !== -1) {
+    const sel = args[li + 1]
+    if (!sel) { console.error('✗ --list 需要一个选择器，如 ci:test'); process.exit(1) }
+    list(catalog, sel)
+  } else if (pl !== -1) {
+    const sel = args[pl + 1]
+    if (!sel) { console.error('✗ --plan 需要一个具名选择器，如 prepare'); process.exit(1) }
+    plan(catalog, sel)
+  } else {
+    validate(catalog)
+  }
 }

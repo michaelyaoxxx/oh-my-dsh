@@ -39,9 +39,24 @@
 import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+// 复用 check-components.mjs 的 loader，而不是自己 JSON.parse：本文件此前直连
+// readFileSync，**不看 version**——schema 再升一版时字段会搬家，而它会照旧结构读，
+// 产出**看似正常**的结果（静默的错，不是响的错）。实测（T2 评审）：version=1 时
+// check-components.mjs 拒绝（rc=1），而本文件 rc=0 静默接受。
+//
+// ⚠️ 这里刻意用 loadCatalog()（**schema 门槛**）而不是 loadCatalogValidated()（**全套不变量**），
+//    理由是**别把两道门耦合起来**，不是放水：
+//      · 本文件（L2 内容层）读的是 <组件>/LICENSE* 文件，与目录的其余不变量无关；
+//      · 若要求"目录完全合法"，它会在 L1 拒绝的**任何**目录上一并拒绝——而
+//        probe-license-gate.sh 的全部价值就是**分开**测这两道门（"不合并成一列"）。
+//        实测（本任务）：用 validated 时夹具 A1（目录声明 GPL-3.0，ENUM 必然拒绝）的
+//        L2 由 GAP 翻成 CAUGHT——那不是"内容层拦住了 copyleft"，而是"内容层拒绝工作"，
+//        覆盖矩阵会把前者当成后者读，等于在**证据文件**里写下一句不成立的话。
+//      · 版本不符 / 形状不对 ⇒ 仍然直接拒绝（这正是那条威胁模型：看不懂的目录不许照读）。
+//    两处的分工见 check-components.mjs 里那两个 export 的注释。
+import { loadCatalog } from './check-components.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const CATALOG = join(ROOT, 'config/components.json')
 
 // 许可证文件的常见命名。按此顺序取**第一个存在的**——同一个仓里有多个时，
 // 取到的应该是主许可证（LICENSE 优于 COPYING 优于 LICENCE）。
@@ -77,7 +92,7 @@ function licenseFileOf(componentDir) {
   return null
 }
 
-const catalog = JSON.parse(readFileSync(CATALOG, 'utf8'))
+const catalog = loadCatalog()
 const listOnly = process.argv.includes('--list')
 let failed = 0
 const warnings = []

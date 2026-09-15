@@ -21,9 +21,14 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+// 复用 check-components.mjs 的**已校验** loader 与字段分类表。
+// 本文件此前直连 JSON.parse，**不看 version**——实测（T2 评审）：version=1 时
+// check-components.mjs 拒绝（rc=1），而本文件 rc=0 静默接受、照样生成。
+// 这不只是"少一道检查"：schema 再升一版时字段会搬家，盲读旧结构的生成器会产出
+// **看似正常**的合规文档——**静默的错，不是响的错**。而生成物是**对外**的那一份。
+import { FIELD_CLASS, loadCatalogValidated } from './check-components.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const CATALOG = join(ROOT, 'config/components.json')
 const OUT = join(ROOT, 'THIRD-PARTY-NOTICES.md')
 
 // .gitmodules 的 name → url / path，再由 path 反查 url
@@ -48,6 +53,32 @@ const FULL_NAME = {
   'MIT': 'MIT License',
   'Apache-2.0': 'Apache License 2.0',
   'AGPL-3.0': 'GNU Affero General Public License v3.0',
+}
+
+// ⚠️ 取全称必须用 Object.hasOwn，**不能**写成 `FULL_NAME[lic] ?? 兜底`。
+// 理由是实测的、同 check-components.mjs 里 FIELD_CLASS / NAMED_SELECTORS 那两处：
+// `FULL_NAME` 是对象字面量，下标访问会**沿原型链**查找，于是 `FULL_NAME['constructor']`
+// 命中 Object 的构造器（**真值**）→ `??` 不触发兜底 → **把一个函数渲染进合规文档**。
+// （`toString` / `valueOf` / `__proto__` 同理。）
+// 诚实说明两点：① 本函数**没有**专门的防退化装置（G1 只 grep 免责字样，管不到这里）；
+// ② 换了上面的 loadCatalogValidated 之后，license 已被 ENUM 约束，原型链名字**目前
+// 到不了这里**——所以这是**纵深防御**，不是当前唯一的堵口。两者都别当成"已测"。
+const fullNameOf = (lic) => (Object.hasOwn(FULL_NAME, lic) ? FULL_NAME[lic] : '（未登记全称）')
+
+// ⚠️ 下列两列的免责标注（「声明，未验证」）**假定**它们在 FIELD_CLASS 里属于 declared 类。
+// 分类若改了，标注就成了一句假话——而 G1 只 grep 一个字面串，**抓不住**这件事。
+// 故显式断言、fail closed：生成物是**对外**的那一份，宁可不生成，也不生成一句不成立的话。
+function assertDeclared(fields) {
+  for (const f of fields) {
+    if (!Object.hasOwn(FIELD_CLASS, f) || FIELD_CLASS[f] !== 'declared') {
+      console.error(
+        `✗ 生成物的免责标注假定 ${f} 属于 declared 类，但 FIELD_CLASS 里它是 ` +
+          `${Object.hasOwn(FIELD_CLASS, f) ? JSON.stringify(FIELD_CLASS[f]) : '未登记'}。` +
+          `标注与分类必须一致：要么同步改 render() 里那张表头，要么先改分类。`,
+      )
+      process.exit(1)
+    }
+  }
 }
 
 const cell = (s) => String(s).replace(/\|/g, '\\|')
@@ -79,7 +110,14 @@ function render(catalog, urls) {
   const excluded = components.filter((c) => c.runtimeScope === 'excluded')
   p('## 组件清单')
   p()
-  p('| 组件 | 许可证 | 来源 | 进制品 | 默认运行时 |')
+  // 免责**必须长在生成物上**，不能只活在 config/README.md 的字段字典里：
+  // 读者拿到的是这一份（对外的那一份），用「来源」「进制品」这类**事实性表头**，
+  // 他无从知道那些列只是 catalog 的声明值。分类只在别处可见 = 读者仍会误解。
+  p('> ⚠️ **「来源」「进制品」「默认运行时」是 catalog 的声明值，未经校验。**')
+  p('> 其中「进制品」对应的 `releaseScope` 目前**没有行为消费者**（制品链尚未实现）——')
+  p('> 它记录意图，不构成保证。字段分类见 [config/README.md](config/README.md)。')
+  p()
+  p('| 组件 | 许可证 | 来源（声明，未验证） | 进制品（声明，未验证） | 默认运行时 |')
   p('| --- | --- | --- | --- | --- |')
   for (const c of components) {
     const rel = c.releaseScope.length ? c.releaseScope.join(', ') : '—'
@@ -99,7 +137,7 @@ function render(catalog, urls) {
   p('## 按许可证聚合')
   p()
   for (const [lic, list] of [...byLic].sort()) {
-    p(`### ${lic} — ${FULL_NAME[lic] ?? '（未登记全称）'}`)
+    p(`### ${lic} — ${fullNameOf(lic)}`)
     p()
     p(`${list.length} 个组件：${list.map((c) => `\`${c.name}\``).join('、')}`)
     p()
@@ -147,7 +185,9 @@ function render(catalog, urls) {
   return L.join('\n')
 }
 
-const catalog = JSON.parse(readFileSync(CATALOG, 'utf8'))
+assertDeclared(['sourceAuthority', 'releaseScope'])
+
+const catalog = loadCatalogValidated()
 const expected = render(catalog, gitmodulesUrls())
 
 if (process.argv.includes('--check')) {

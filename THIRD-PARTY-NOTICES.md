@@ -18,7 +18,11 @@
 
 ## 组件清单
 
-| 组件 | 许可证 | 来源 | 进制品 | 默认运行时 |
+> ⚠️ **「来源」「进制品」「默认运行时」是 catalog 的声明值，未经校验。**
+> 其中「进制品」对应的 `releaseScope` 目前**没有行为消费者**（制品链尚未实现）——
+> 它记录意图，不构成保证。字段分类见 [config/README.md](config/README.md)。
+
+| 组件 | 许可证 | 来源（声明，未验证） | 进制品（声明，未验证） | 默认运行时 |
 | --- | --- | --- | --- | --- |
 | `harness` | MIT | [`github`](https://github.com/deepseek-ai/deepseek-harness.git) | bundle, sbom, provenance | 包含 |
 | `dsh-web` | Apache-2.0 | [`github`](https://github.com/zhu1090093659/dsh-web.git) | bundle, sbom | 包含 |

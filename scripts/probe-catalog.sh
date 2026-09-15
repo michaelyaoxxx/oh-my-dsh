@@ -547,6 +547,47 @@ write_catalog "[$(good_component e8meta plugins/e8meta)]" 2
 write_gitmodules "plugins/e8meta"
 assert_warn_case "E8 只跟踪元数据（package.json/cordis.patch.yml）⇒ 不得警告" ABSENT e8meta
 
+# ── E9/E10：`tracked()` 的**三分**——别把「查不了」说成「坏了」 ────────────────────
+# 背景（T9 实测）：deploy-remote.sh 的 rsync 带 `--exclude '.git'`，服务器树上**没有任何
+# git 元数据**。旧实现把**任何** git 失败都当成"未被跟踪"，于是在那棵树上输出
+#   ✗ …声明的入口 lib/index.js **未被 git 跟踪**——fresh clone 上该组件是坏的
+# ——而那些文件**就在那儿**（rsync 过来的），只是 `git ls-files` 跑不了。
+# 这是把**「查不了」说成了「坏了」**：正是 AGENTS.md 禁止的形态（把推断写成已验证），
+# 只不过这次是**工具对用户**说的。
+#
+# 三分：已跟踪 / 确认未被跟踪（照旧 fail，E1/E3 钉着）/ 查不了（计入 skipped，
+# 且**不得**下"组件坏了"这种未经验证的结论）。严格模式下 skip 仍即失败（E10）。
+# ⚠️ 判据必须**具体**：只有「该目录**不存在 git 元数据**」才算"查不了"。
+#    写成"git 报错就跳过"会把真正的"未被跟踪"一起吞掉——那正是 E1/E3 拦的东西。
+#
+# 用 make_subrepo 造好**真仓**后删掉 `.git`：目录与 package.json 都齐备、唯独 git 元数据
+# 不在——与 rsync 出来的服务器树同形。不另写构造函数：那会把"真仓"与"无元数据的树"的
+# 差异藏进一个参数里，而这里要的恰恰是**看得见**的那一步（删的就是判据本身）。
+make_subrepo plugins/e9 '{"name":"e9","main":"lib/index.js"}' "lib/index.js"
+rm -rf "$TMP/plugins/e9/.git"
+write_catalog "[$(good_component e9 plugins/e9 '{"prepareMode":"tracked-prebuilt"}')]" 2
+write_gitmodules "plugins/e9"
+# E9：非严格模式 ⇒ **应通过**，且输出里**不得**出现那两句"坏了"的断言。
+# 判据分两半：①（rc）与 ②（**不得**出现的文案）——后者不是"文案断言"，而是**禁止断言**：
+# 它钉的是"工具不得说出一个它没有验证过的结论"，措辞换掉不算数（换成别的坏话同样不行，
+# 但那由人工评审兜底；这里挡的是回退到旧形态）。
+e9_bad=""
+if [ -s "$CONSTRUCT_ERR" ]; then e9_bad="构造失败：$(cat "$CONSTRUCT_ERR")"; : > "$CONSTRUCT_ERR"; fi
+e9_out="$(cd "$TMP" && node scripts/check-components.mjs 2>&1)"; e9_rc=$?
+[ "$e9_rc" -eq 0 ] || e9_bad="${e9_bad}；非严格模式应 rc=0，实测 rc=${e9_rc}"
+printf '%s' "$e9_out" | grep -q '未被 git 跟踪' && e9_bad="${e9_bad}；把「查不了」说成了「未被 git 跟踪」"
+printf '%s' "$e9_out" | grep -q 'fresh clone 上该组件是坏的' && e9_bad="${e9_bad}；下了「fresh clone 上该组件是坏的」这个未经验证的结论"
+printf '%s' "$e9_out" | grep -q 'e9' || e9_bad="${e9_bad}；输出里没提到 e9（真的查了吗？）"
+e9_flag=0; [ -z "$e9_bad" ] || e9_flag=1
+assert_case "E9 无 git 元数据（非严格，应通过且不得称组件坏）" "$e9_flag" "$e9_bad"
+printf '       实测: rc=%s；materialized 行: %s\n' "$e9_rc" "$(printf '%s' "$e9_out" | grep -m1 'materialized 检查')"
+# E10：**同一 fixture** + --require-materialized ⇒ **必须失败**（严格语义不变：skip 即失败）。
+# 它与 E9 配对，且顺带证明该组件确实被**计入 skipped**——它的失败走的是"无法校验"那条
+# 分支，而不是"确认未被跟踪"。run_case 的唯一归因（恰好 1 条 ✗）同时挡住"因旁边规则变红"。
+write_catalog "[$(good_component e10 plugins/e9 '{"prepareMode":"tracked-prebuilt"}')]" 2
+write_gitmodules "plugins/e9"
+run_case "E10 无 git 元数据 + --require-materialized" CAUGHT --require-materialized
+
 echo
 echo "== F. 消费者的 fail-open（目录查询失败必须 fail closed）=="
 # 这一组测的是**消费方**：`--list` 已经在 D6 里证明"非法目录 ⇒ 非零退出"，但消费方若把
@@ -819,6 +860,43 @@ for f in scripts/link-plugins.sh deploy/remote-install.sh; do
     printf '  %-44s %s\n' "F5 $f 目录查询行形态（静态补充）" "ok"
   fi
 done
+
+echo
+echo "== G. 生成物对 declared 字段的免责 =="
+if grep -q '声明，未验证' "$ROOT/THIRD-PARTY-NOTICES.md" 2>/dev/null; then
+  printf '  %-44s %s\n' "G1 生成物标注了 declared 字段未经校验" "ok"
+else
+  printf '  %-44s %s\n' "G1 生成物标注了 declared 字段未经校验" "!! 未标注"; FAILED=$((FAILED + 1))
+fi
+
+echo
+echo "== H. 所有 catalog 读取方都必须 fail-closed =="
+# 夹具目前只拷了 check-components.mjs（见脚本顶部的 cp），H2 要用到第二个：
+cp "$ROOT/scripts/check-licenses.mjs" "$TMP/scripts/"
+cp "$ROOT/scripts/check-pins.sh" "$TMP/scripts/"
+# 造一个**版本非法**的 catalog，逐个读取方跑：谁静默接受，谁就是 fail-open。
+# 背景（2026-09-15 T2 评审实测）：check-components.mjs 会拒绝，但
+# check-licenses.mjs 与 gen-notices.mjs **rc=0 静默接受**，check-pins.sh 同理。
+printf '{\n  "version": 1,\n  "components": []\n}\n' > "$TMP/config/components.json"
+# ⚠️ 名单必须覆盖**全部**读取方，不只是前两个：漏掉的那个会成为唯一的 fail-open 出口，
+#    而这一组的意义恰恰是"一个都不许静默接受"。gen-notices 也进循环（它写的是
+#    $TMP 下的生成物，碰不到本仓文件）。
+for f in check-components.mjs check-licenses.mjs gen-notices.mjs; do
+  if (cd "$TMP" && node "scripts/$f" >/dev/null 2>&1); then
+    printf '  %-44s %s\n' "H $f 拒绝 version=1" "!! 静默接受"; FAILED=$((FAILED + 1))
+  else
+    printf '  %-44s %s\n' "H $f 拒绝 version=1" "ok"
+  fi
+done
+# H4：第三个读取方是 **bash**（跑法与上面不同，故不并进循环，但**不能因此漏测**）：
+# 它是 T7 实现者实测的**假绿当事人**——catalog 读不出来时它打印「✓ 全部 pin 校验通过」
+# 且 rc=0。在 CI / release 路径上它被同组的 check-components.mjs 遮蔽（不会整体假绿），
+# 但**单独跑就是假绿**，属"被遮蔽"而非"不可达"。判据同上面：目录非法 ⇒ 必须非零退出。
+if (cd "$TMP" && bash scripts/check-pins.sh >/dev/null 2>&1); then
+  printf '  %-44s %s\n' "H check-pins.sh 拒绝 version=1" "!! 静默接受（单独跑即假绿）"; FAILED=$((FAILED + 1))
+else
+  printf '  %-44s %s\n' "H check-pins.sh 拒绝 version=1" "ok"
+fi
 
 echo
 if [ "$STRICT" = 1 ] && [ "$FAILED" -ne 0 ]; then
