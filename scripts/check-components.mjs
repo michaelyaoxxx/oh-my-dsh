@@ -31,7 +31,7 @@ const ENUM = {
   ciScope: ['build', 'install', 'test', 'package', 'metadata'],
   releaseScope: ['bundle', 'sbom', 'provenance'],
   runtimeScope: ['required', 'excluded'],
-  buildMode: ['source-build', 'prebuilt-verified', 'no-build'],
+  prepareMode: ['source-build', 'tracked-prebuilt', 'install-only', 'none'],
   platforms: ['linux-x86_64', 'macos-arm64'],
   // SPDX 标识符。两处**刻意的排除**，都会让登记人在此停下：
   //   · 不含 `unknown` —— 本字段进 THIRD-PARTY-NOTICES.md（合规文档），「unknown」在那里
@@ -47,13 +47,15 @@ const ENUM = {
 }
 const REQUIRED_FIELDS = [
   'name', 'path', 'sourceAuthority', 'pinPolicy', 'pinRef',
-  'ciScope', 'releaseScope', 'runtimeScope', 'platforms', 'buildMode',
-  'packageManager', 'testProfile',
+  'ciScope', 'releaseScope', 'runtimeScope', 'platforms', 'prepareMode',
+  'testProfile',
   // license 同样是必需字段：缺失会在生成的声明文件里留下空洞，而那是合规文档。
   'license',
 ]
 
 const fail = (msg) => { console.error(`✗ ${msg}`); process.exitCode = 1 }
+
+const SCHEMA_VERSION = 2
 
 function loadCatalog() {
   let raw
@@ -61,6 +63,15 @@ function loadCatalog() {
     raw = JSON.parse(readFileSync(CATALOG, 'utf8'))
   } catch (e) {
     console.error(`✗ 无法解析 ${CATALOG}：${e.message}`)
+    process.exit(1)
+  }
+  // 未知版本**直接拒绝**，不做尽力兼容——读一个自己不认识的结构，只会做出错误决定。
+  // 迁移规则见 config/README.md 的「版本与迁移」。
+  if (raw.version !== SCHEMA_VERSION) {
+    console.error(
+      `✗ catalog schema 版本不符：文件是 ${JSON.stringify(raw.version)}，本工具要求 ${SCHEMA_VERSION}。` +
+        `\n  迁移规则见 config/README.md。不要改回旧版本号来绕过。`,
+    )
     process.exit(1)
   }
   if (!Array.isArray(raw.components)) {

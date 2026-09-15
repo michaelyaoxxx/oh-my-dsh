@@ -68,16 +68,15 @@ good_component() {
   # 调用方的 `[$(...)]` 就会写成空数组 [] ——见 record_construct_error 的注释。
   if ! out="$(node -e '
     // 字段 = 当前校验器的 REQUIRED_FIELDS，取值形状对齐真实 config/components.json。
-    // ⚠️ 这里要的是 buildMode / packageManager，**不是** config/README.md 里的
-    //    prepareMode：后者是 T2 引入的 schema v2 才有的（届时删 packageManager、
-    //    并把本行同步改掉）。夹具跟的是**当前**校验器，不是目标态。
+    // ⚠️ fixture 的字段名必须跟**当前**校验器，不跟 config/README.md 描述的目标态——
+    //    否则 schema 再升一版时，这里会先于校验器失效。
     //    改字段前先跑一次本脚本的自检——夹具写错会让下面所有用例假过。
     const base = {
       name: process.argv[1], path: process.argv[2], sourceAuthority: "github",
       pinPolicy: "tag", pinRef: "v1.0.0",
       ciScope: ["build"], releaseScope: ["bundle"], runtimeScope: "required",
-      platforms: ["linux-x86_64"], buildMode: "source-build",
-      packageManager: "pnpm", testProfile: "vitest",
+      platforms: ["linux-x86_64"], prepareMode: "source-build",
+      testProfile: "vitest",
       stateSchema: "none", license: "MIT",
     }
     const over = process.argv[3] ? JSON.parse(process.argv[3]) : {}
@@ -118,12 +117,12 @@ echo "  scratch: ${TMP}（退出即清理）"
 
 echo
 echo "== 0. 夹具自检（必须通过，否则下面全是假阳性）=="
-write_catalog "[$(good_component ok plugins/ok)]" 1
+write_catalog "[$(good_component ok plugins/ok)]" 2
 write_gitmodules "plugins/ok"
 if (cd "$TMP" && node scripts/check-components.mjs >/dev/null 2>&1); then
-  printf '  %-44s %s\n' "合法的 v1 catalog 应通过" "ok"
+  printf '  %-44s %s\n' "合法的当前版本 catalog 应通过" "ok"
 else
-  printf '  %-44s %s\n' "合法的 v1 catalog 应通过" "!! 夹具坏了——以下结果不可信"
+  printf '  %-44s %s\n' "合法的当前版本 catalog 应通过" "!! 夹具坏了——以下结果不可信"
   FAILED=$((FAILED + 1))
 fi
 
@@ -133,9 +132,19 @@ echo "== 0b. 夹具能力自检：能产出 CAUGHT（不只会说 ok）=="
 # 用它证明夹具能识别"该拒的确实被拒"，而不只是"该过的过了"。
 # 顺带：这条用例让 run_case 真的被调用——否则会触发 SC2329 报告
 # （「函数未被调用」+ 文件末尾有 exit 0），-S style 下即失败。删它之前先想清楚这一点。
-write_catalog "[$(good_component ok plugins/ok),$(good_component ghost plugins/ghost)]" 1
+write_catalog "[$(good_component ok plugins/ok),$(good_component ghost plugins/ghost)]" 2
 write_gitmodules "plugins/ok"
 run_case "组件在 catalog 但不在 .gitmodules" CAUGHT
+
+echo
+echo "== A. schema 版本 =="
+write_catalog "[$(good_component ok plugins/ok)]" 1
+write_gitmodules "plugins/ok"
+run_case "A1 version=1（本仓只接受 2）"     CAUGHT
+write_catalog "[$(good_component ok plugins/ok)]" 3
+run_case "A2 version=3（未知版本拒绝）"     CAUGHT
+write_catalog "[$(good_component ok plugins/ok)]" 2
+run_case "A3 version=2（当前版本接受）"     GAP
 
 echo
 if [ "$STRICT" = 1 ] && [ "$FAILED" -ne 0 ]; then

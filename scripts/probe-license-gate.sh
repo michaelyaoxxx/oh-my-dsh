@@ -58,14 +58,14 @@ stage() {
   printf '[submodule "plugins/evil"]\n\tpath = plugins/evil\n\turl = https://example.invalid/evil.git\n' > "$TMP/.gitmodules"
   cat > "$TMP/config/components.json" <<EOF
 {
-  "version": 1,
+  "version": 2,
   "components": [
     {
       "name": "evil", "path": "plugins/evil", "sourceAuthority": "github",
       "pinPolicy": "tag", "pinRef": "v1.0.0",
       "ciScope": ["build"], "releaseScope": ["bundle"], "runtimeScope": "required",
-      "platforms": ["linux-x86_64"], "buildMode": "source-build",
-      "packageManager": "pnpm", "testProfile": "vitest", "license": "$1"
+      "platforms": ["linux-x86_64"], "prepareMode": "source-build",
+      "testProfile": "vitest", "license": "$1"
     }
   ]
 }
