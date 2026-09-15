@@ -25,7 +25,7 @@
 
 | # | 问题 | 现状 | 下一步 |
 | --- | --- | --- | --- |
-| B1 | **`plugins/dsh-web` pin 落后上游 191 个提交** | 实测（2026-09-13）：`pin vs origin/main` = behind 191 | 动 CI / 发版前先与上游同步，并跑一遍完整回归 |
+| B1 | **`plugins/dsh-web` pin 落后上游较多，且漂移未收敛** | 实测快照：2026-09-13 behind **191** → 2026-09-15（Linux 全量自检）behind **231** | 动 CI / 发版前先与上游同步，并跑一遍完整回归 |
 | B3 | **`make deploy` 从未实际执行过** | 脚本与 systemd unit 已写好，但部署路径**一次都没跑通** | 找一台 Linux x86-64 实跑一遍（注意：原生依赖必须在该平台各自构建） |
 | B4 | **新装插件的 UI 验收未做** | modsearch（搜索 + fetch）、dsh-at-file、dsh-agent-teams、dsh-market、modlens 等挂上了但未逐个走查 | 在 `make dev` 里逐个过主要交互 |
 | B6 | **dsh-TUI 的 macOS 路径长度缺陷应报上游** | 其 `scripts/verify-inject-channel.mjs` 用 `os.tmpdir()`，macOS 下 unix socket 路径达 105 字节 > `sun_path` 上限 104 → `listen EINVAL`。本仓已用 `TMPDIR=/tmp` 绕行 | 报给 ccch1mneyyy/dsh-TUI（建议短路径或建 socket 前检查长度） |
@@ -37,6 +37,8 @@
 | B11 | **两个调用方各持一份逐字节相同的「动作原语」（11 个函数）** | `scripts/setup.sh` 与 `deploy/remote-install.sh` 里从 `plugin_install` 起的动作原语段**逐字节相同**（含带分支的 35 行 `plugin_install`），**没有任何门禁保证它们同步**。`prepare-executor.sh` 只统一了**决策**（`case "$prepareMode"` 全仓仅一份），**动作**仍是两份。**成本已经发生过一次**：`ret=$?` 的 fail-open 必须修两次才对齐（`a4a3808` + `a25af8b`） | 把动作原语也收进共用实现，让两处只剩**真正的**环境差异（install 策略 `frozen`/`nonfrozen`、harness 的 `CI=true`）。⚠️ 这是**接口变更**，该单独走 ADR 级思考，不要在收尾阶段顺手动。当前只在两处各留了互相指向的注释作**提醒**（不是装置，挡不住漂移） |
 
 | B12 | **缺 `.gitmodules` 时 `check-components.mjs` 抛裸栈，而不是干净报错** | 2026-09-15 实测：把 `config/components.json` 与 `scripts/check-components.mjs` 拷到临时目录（**没有 `.gitmodules`**）跑 `--plan prepare`，得到未捕获异常而非"缺文件"的提示：`Error: Command failed: git config -f .gitmodules --get-regexp ^submodule\..*\.path$` at `gitmodulesPaths (check-components.mjs:150:15)` / `validateCatalog (:476:32)`。根因是 `validateCatalog()` 里含 **`.gitmodules` 双向集合校验**——`.gitmodules` 是**被校验的输入**，不是依赖。**fail-closed 的方向是对的**（不会给出错误结论），但诊断形态差：症状与 T5 的 `NAMED_SELECTORS` 崩溃**同族**——"查不了"报成了"坏了/崩了" | 在 `gitmodulesPaths()` 里判「`.gitmodules` 不存在 / `git config` 非零」并给干净报错（缺什么、下一步做什么）。⚠️ 不在收尾批修（`scripts/` 已定稿） |
+
+| B13 | **harness 的 boot 组合顺序竞态：`@deepseek-ai/dsh-client-modules` 偶发崩 `cannot get property "webServer" without inject`** | 2026-09-15 Linux x86-64 全量搭建实测：首次 `dsh --profile dsh --no-open` boot 崩溃（`ClientModuleRegistry` 构造时 `ctx.get('webServer')` 已非 undefined → 走 else 分支**直接属性访问** `webCtx.webServer`，而该类只 `static inject = ['loader']`——见 harness/packages/client/modules/src/index.ts:570-577）；**第二次 boot 即成功**，冒烟 HTTP 401+303 通过 ⇒ **非确定性激活顺序竞态，非平台特有**。CI 冒烟存在同款偶发失败面 | 报 harness 上游：else 分支应改用 `ctx.get` 弱探测或按真实 inject 声明再访问。本仓以「boot 失败重跑一次」绕过（**不改 submodule**） |
 
 ## 暂缓（**有意不做，非遗漏**）
 

@@ -26,7 +26,8 @@
 
 - **从超级仓根目录启动集成任务。** `harness/` 下有多层嵌套 `AGENTS.md`（上游内容），
   从子目录启动会让指令链被截断或与超级仓规则叠加。
-- **目标平台**：本地 macOS M4（arm64）；服务器 Linux（Ubuntu）x86-64。
+- **目标平台**：本地开发支持 macOS M4（arm64）与 Linux（Ubuntu）x86-64（后者 2026-09-15 已
+  完整闭环验证：setup / link / 冒烟 / `make check` 全绿）；服务器 Linux（Ubuntu）x86-64。
   **原生 Node 依赖必须按平台各自构建，严禁跨平台拷贝 `node_modules`**。
 - **原生构建**：harness 的 `pnpm build` 先跑 `build:native-system`，需要 C 编译器与 Node
   开发头文件；其产物（`native/system/packages/*/bin/`）已 gitignore，各平台各自构建。
