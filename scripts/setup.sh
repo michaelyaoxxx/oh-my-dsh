@@ -5,6 +5,7 @@
 #       统一走 corepack：每个仓库按其 package.json 的 packageManager 字段解析各自 pin 的 pnpm。
 set -euo pipefail
 cd "$(dirname "$0")/.."          # 主仓根
+ROOT="$PWD"                      # source 共用 executor 用（. "$ROOT/scripts/prepare-executor.sh"）
 
 # ---------- 1. 工具链前置校验 ----------
 if ! command -v node >/dev/null 2>&1; then
@@ -213,36 +214,39 @@ node scripts/check-components.mjs || {
   echo "错误: 组件目录校验失败（见上）。请先修正 config/components.json 与 .gitmodules 的一致性。" >&2
   exit 1
 }
-INSTALL_LIST="$(node scripts/check-components.mjs --list prepare)"
+# 计划由**查询器**给出（path + prepareMode），动作由**共用 executor** 执行。
+# 两处各写一套「怎么准备」的 case 会让漂移从"选哪个字段"变成"怎么执行动作"（ADR-0005）。
+#
+# 先跑 materialized 严格校验：本机到这一步子仓已就绪，没有理由再容忍 skip。
+node scripts/check-components.mjs --require-materialized || {
+  echo "错误: 组件目录的 materialized 校验失败（见上）。修正后重试。" >&2
+  exit 1
+}
 
-for d in plugins/*/; do
-  [ -f "$d/package.json" ] || continue
-  rel="${d%/}"
-  if ! printf '%s\n' "$INSTALL_LIST" | grep -qx "$rel"; then
-    echo "==> 跳过安装/构建: ${rel}（组件目录 runtimeScope 不是 required）"
-    continue
-  fi
-  echo "==> 安装插件依赖: $d"
-  if [ -f "$d/pnpm-lock.yaml" ]; then
+PREPARE_PLAN="$(node scripts/check-components.mjs --plan prepare)"
+
+# ── 环境策略钩子（本地）─────────────────────────────────────────────────────
+# 本地容忍缺 lockfile（非冻结安装），服务器不允许——这是**唯一**该有差异的地方。
+pe_install() { # $1=rel  $2=frozen|nonfrozen
+  local rel="$1" d="$1/"
+  if [ -f "${d}pnpm-lock.yaml" ]; then
     plugin_install "$d" install --frozen-lockfile
   elif has_npm_lock "$d"; then
-    echo "==> ${d%/} 使用 npm（package-lock.json，可复现安装）"
+    echo "==> ${rel} 使用 npm（package-lock.json，可复现安装）"
     plugin_install "$d" ci
   else
-    echo "注意: ${d%/} 无 pnpm-lock.yaml 也无 package-lock.json，将执行非冻结安装（pnpm install），可能在插件 submodule 内生成或改动文件（如 lockfile）。如需可复现安装，请在插件仓提交 lockfile。"
+    echo "注意: ${rel} 无 pnpm-lock.yaml 也无 package-lock.json，将执行非冻结安装（pnpm install），可能在插件 submodule 内生成或改动文件（如 lockfile）。如需可复现安装，请在插件仓提交 lockfile。"
     plugin_install "$d" install
   fi
-  # 入口文件已提交在仓库内的插件自带构建产物（pin 的一部分）→ 跳过 build：本地重建会因
-  # 绝对路径哈希（如 CSS module 类名）产生与 pin 不同的产物，弄脏 submodule。源码形态的单包
-  # 仓（入口未提交，如 dsh-better-sidebar）与 workspace 根（无 main，如 dsh-web）需要构建。
-  main_entry="$(node -e 'const fs=require("fs");process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).main||"")' "$d/package.json")"
-  if [ -n "$main_entry" ] && git -C "$d" ls-files --error-unmatch "${main_entry#./}" >/dev/null 2>&1; then
-    echo "==> 跳过构建: ${d%/} 入口 ${main_entry} 已提交在仓库内"
-  elif node -e 'const fs=require("fs");process.exit(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).scripts?.build?0:1)' "$d/package.json" 2>/dev/null; then
-    echo "==> 构建插件: $d"
-    # run build 而非裸 build：npm 只认 run，pnpm 两者等价
-    plugin_run "$d" run build
-  fi
-done
+}
+pe_run_build() { plugin_run "$1/" run build; }
+
+# shellcheck source=scripts/prepare-executor.sh
+. "$ROOT/scripts/prepare-executor.sh"
+
+while IFS=$'\t' read -r rel mode; do
+  [ -n "$rel" ] || continue
+  prepare_component "$rel" "$mode" nonfrozen || exit 1
+done <<< "$PREPARE_PLAN"
 
 echo "setup 完成。运行 make dev 启动 DSH Web。"
