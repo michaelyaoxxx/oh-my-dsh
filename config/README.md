@@ -148,6 +148,12 @@
 - `prepareMode: tracked-prebuilt` ⇒ `main`、`types`、以及所有**无通配符**的 `exports` 目标，
   **均被 git 跟踪**（只查 `main` 不够：`exports` 指向未跟踪文件时 fresh clone 照样是坏的）
 - `prepareMode: source-build` ⇒ `package.json.scripts.build` 存在
+- catalog 里声明的 `license` 与**子仓 `package.json` 声明的 `license` 一致**
+  （`checkLicenseDeclarations()`）。⚠️ **本条此前漏列在此清单里**，但它在 `validate()` 里**一直**跟着跑，
+  报告里也会出现（`license 与组件自身声明核对：N 个一致；M 个跳过`）——
+  它读的是 `join(ROOT, c.path, 'package.json')`，即**子仓里**的文件，
+  判据正是「会不会读子仓」（`.gitmodules` 是**主仓**的文件，故双向集合校验属 catalog 阶段，
+  见 `scripts/check-components.mjs` 里 `validate()` 上方的注释）。
 
 **一条只报警告、不阻断的：** `source-build` 且**任何会被加载的入口**已被 git 跟踪 ⇒
 构建会**弄脏 submodule**，进而触发部署的快照保真检查。这是**运维后果**，不是 schema 矛盾——
@@ -181,21 +187,27 @@
 >
 > ⚠️ **注意有一行极性相反**：「删除 `packageManager`」的实现判据是**字符串不存在**。
 > 对其余各行「grep 到了 = 已实现」成立，对那一行**不成立**。判据要按**语义**定，不能一律套 `grep`。
+>
+> ⚠️ **引用代码位置一律用符号（函数名 / 类名 / 那一行代码本身），不要写行号。**
+> 行号会随任何一次编辑漂，而**漂了没有任何信号**——本表此前写的 `:376` / `:670` / `:443-444`
+> 就是这么过期掉的（实际是 `:377` / `:671` / `:444-445`）。
+> `scripts/probe-catalog.sh` 的 F5 注释里立过同一条规矩（「刻意不写行号」）——
+> **判据要能被重跑，位置要能被搜到**，行号两条都做不到。
 
 | 模型中的东西 | 当前实现状态 |
 | --- | --- |
-| 字段三分类 | **已实现**（不只"已定义"）。`scripts/check-components.mjs:63` 的 `FIELD_CLASS` 声明每个字段的类别；`checkFieldClassValues()`（同文件 `:376`）校验类别**值**也在受控词表内；未登记分类的字段直接拒绝。验证：`node scripts/check-components.mjs` → rc=0；`bash scripts/probe-catalog.sh` 的 B3/B4/B5 钉住三条退化路径 |
+| 字段三分类 | **已实现**（不只"已定义"）。`scripts/check-components.mjs` 的 `FIELD_CLASS` 声明每个字段的类别；同文件的 `checkFieldClassValues()` 校验类别**值**也在受控词表内；未登记分类的字段直接拒绝。验证：`node scripts/check-components.mjs` → rc=0；`bash scripts/probe-catalog.sh` 的 B3/B4/B5 钉住三条退化路径 |
 | `prepareMode` 四值 | **已实现**。字段已更名，`ENUM.prepareMode` 列出四值。验证：`grep -n "prepareMode: \['source-build'" scripts/check-components.mjs` → `:41` 含全部四值。⚠️ **当前 11 个组件只用到其中三个**（`source-build` / `tracked-prebuilt` / `none`），`install-only` 是**允许但暂无使用者**的取值——别把"没人用"读成"不支持" |
-| `--plan prepare` | **已实现**。验证：`node scripts/check-components.mjs --plan prepare` → rc=0，**10 行** `<path>\t<prepareMode>`（`prepareMode: none` 的 `dsh-tui` 不在计划里） |
+| `--plan prepare` | **已实现**。验证：`node scripts/check-components.mjs --plan prepare` → rc=0，**10 行** `<path>\t<prepareMode>`。⚠️ `dsh-tui` 不在计划里，判据是 **`runtimeScope: excluded`**（具名选择器 `prepare` 展开为 `runtime:required`）——**不是** `prepareMode: none`。二者因正交不变量而等价，但**判据是 `runtimeScope`** |
 | 两阶段校验 + `--require-materialized` | **已实现**。验证：`node scripts/check-components.mjs` → rc=0（`materialized 检查：10 个已验；0 个跳过`）；`node scripts/check-components.mjs --require-materialized` → rc=0 且严格模式措辞生效（`0 个跳过——子仓未初始化（严格模式，跳过即失败）`） |
 | 删除 `packageManager` | **已实现**——⚠️ **本行判据是"字符串不存在"**。验证：`node -e 'const c=require("./config/components.json");console.log(c.components.some(x=>"packageManager" in x))'` → `false`。⚠️ 全仓仍有 `packageManager` 字样（`scripts/setup.sh`、`deploy/remote-install.sh`）——那些读的是**子仓自己的** `package.json`，正是本表声明的权威源。**它们不是本行要删的东西** |
 | `version: 1 → 2` | **已实现**。验证：`grep -n '"version"' config/components.json` → `"version": 2` |
 | 删除 `setup.sh` / `remote-install.sh` 的 `main` 被跟踪启发式 | **已实现**。两处脚本已无该启发式；跟踪判定改由 materialized 阶段统一做（`trackedState()`）。验证：`grep -n 'ls-files' scripts/setup.sh deploy/remote-install.sh` → 剩余命中**只有** `pnpm-workspace.yaml` 的脚手架判定，与本启发式无关 |
-| 三处 fail-open | **已修复**。① 查询路径绕过校验：`scripts/check-components.mjs:670` 改为分发**之前** `validateCatalog()` + `process.exit(1)`；② `scripts/link-plugins.sh:38`；③ `deploy/remote-install.sh:60`——后两处改为 `if ! _excluded="$(…)"` **显式判 rc**（只删 `\|\| true` 不够：`done < <(cmd)` 拿不到退出码，见两处注释） |
+| 三处 fail-open | **已修复**。① 查询路径绕过校验：`scripts/check-components.mjs` 在**分发之前**加了 `if (wantsQuery && !validateCatalog(catalog)) process.exit(1)`；② `scripts/link-plugins.sh` 的目录查询那一行；③ `deploy/remote-install.sh` 同形一处——后两处改为 `if ! _excluded="$(…)"` **显式判 rc**（只删 `\|\| true` 不够：`done < <(cmd)` 拿不到退出码，见两处注释） |
 | **`gen-notices` 对 declared 字段标注免责** | **已实现**。生成物表头为「来源（声明，未验证）」「进制品（声明，未验证）」，且**双向**钉住：`assertColumnClasses()` 要求带后缀的列在 `FIELD_CLASS` 里**真是** `declared`，不带后缀的列**不是**。验证：`grep -n "声明，未验证" THIRD-PARTY-NOTICES.md`；`node scripts/gen-notices.mjs --check` → rc=0 |
-| **统一的 prepare 执行器** | 🟡 **部分实现**。`scripts/prepare-executor.sh` 统一了**决策**（`case "$prepareMode"` 全仓仅一份，被 `scripts/setup.sh:285` 与 `deploy/remote-install.sh:299` 共同 source）。⚠️ **但动作原语仍是两份**：从 `plugin_install` 起的一整段（含带分支的 35 行 `plugin_install`）在两个调用方**逐字节相同**，**没有任何门禁保证它们同步**——见 [docs/backlog.md](../docs/backlog.md) **B11**。这笔账已经付过一次代价：`ret=$?` 的 fail-open 要修**两次**才对齐（`a4a3808` + `a25af8b`）。**别把本行读成"已实现"** |
-| **setup 在子仓就绪后、执行计划前调用 materialized 严格校验** | **已实现**。验证：`scripts/setup.sh:218` 的 `node scripts/check-components.mjs --require-materialized \|\| { …; exit 1; }`，在 `:223` 取计划**之前** |
-| **`pinRef` 形如合法 ref（而不只是非空）** | ❌ **未实现**。当前只查了**非空**与**不带 `refs/` 前缀**（`scripts/check-components.mjs:443-444`），**没有** ref 形态校验。⇒ `pinRef: "???"`、`pinRef: "a b"` 这类值能通过 catalog 阶段，直到 `check-pins.sh` 拿它去 fetch 才暴露。**这一项是上游不变量清单（本文件 `catalog 阶段` 那段）里唯一还没落地的一条** |
+| **统一的 prepare 执行器** | 🟡 **部分实现**。`scripts/prepare-executor.sh` 统一了**决策**（`case "$prepareMode"` 全仓仅一份，被 `scripts/setup.sh` 与 `deploy/remote-install.sh` 各自 source）。⚠️ **但动作原语仍是两份**：从 `plugin_install` 起的一整段（含带分支的 35 行 `plugin_install`）在两个调用方**逐字节相同**，**没有任何门禁保证它们同步**——见 [docs/backlog.md](../docs/backlog.md) **B11**。这笔账已经付过一次代价：`ret=$?` 的 fail-open 要修**两次**才对齐（`a4a3808` + `a25af8b`）。**别把本行读成"已实现"** |
+| **setup 在子仓就绪后、执行计划前调用 materialized 严格校验** | **已实现**。验证：`scripts/setup.sh` 里 `node scripts/check-components.mjs --require-materialized \|\| { …; exit 1; }` 在取 `--plan prepare` 计划**之前** |
+| **`pinRef` 形如合法 ref（而不只是非空）** | ❌ **未实现**。当前只查了**非空**与**不带 `refs/` 前缀**（`scripts/check-components.mjs` 的 `validateCatalog()` 里那两条 `pinRef` 检查），**没有** ref 形态校验。⇒ `pinRef: "???"`、`pinRef: "a b"` 这类值能通过 catalog 阶段，直到 `check-pins.sh` 拿它去 fetch 才暴露。**这一项是上游不变量清单（本文件 `catalog 阶段` 那段）里唯一还没落地的一条**，ADR-0005 侧对应「实施偏离记录 **D4**」 |
 | **完整的产物校验（最小加载 / 冒烟）** | ❌ **未实现**。`tracked-prebuilt` 只声称「**声明的运行入口已被 git 跟踪**」——那是一个**可执行判据**；"验证输出""验证所有产物"目前**没有**可执行判据，故本文件不使用这些说法（见上方「命名与措辞的诚实性」）。要落地得先定义"输出契约" |
 
 实现计划见 [ADR-0005](../docs/cicd/adr/0005-component-catalog-lifecycle.md) 的「实施约束」。
