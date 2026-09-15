@@ -34,8 +34,9 @@ for arg in "$@"; do
 done
 SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/dsh-t0b-alpha.XXXXXX")"
 
-# cleanup 由 `trap … EXIT` 调用，shellcheck 看不见这种间接调用 → SC2329 假阳性。
-# shellcheck disable=SC2329
+# cleanup 由 `trap … EXIT` 调用，shellcheck 看不见这种间接调用 → SC2329/SC2317 一组
+# 假阳性（函数"从未被调用"+"体不可达"）。窄范围豁免。
+# shellcheck disable=SC2329,SC2317
 cleanup() {
   if [ "$KEEP" = 1 ]; then
     printf '\n（保留 scratch：%s）\n' "$SCRATCH"

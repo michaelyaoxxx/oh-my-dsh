@@ -15,7 +15,7 @@ make dev       # 启动 DSH Web（$DSH_HOME=./.dsh，插件 link 挂载，改插
 `make dev` 先把 `plugins/*` 中可挂载的插件包 link 挂进 profile `dsh`，再启动服务，默认监听 `http://127.0.0.1:3080`（仅本机回环）。`make dev` 依赖 harness 已构建，首次使用请先 `make setup`。
 
 **Linux x86-64 本地开发**（2026-09-15 已在 Ubuntu 24.04 LTS x86-64 完整闭环验证：`make setup` / `make link-plugins` / 冒烟 HTTP 401+303 / `make check` 6 项全绿）：
-前置依赖与 macOS 同构——Node.js `^22.19 || >=24`（**需含开发头文件**，部分发行版包另装 `nodejs-dev` 或 `node-headers`）、`build-essential`（提供 `cc`）、corepack。`shellcheck` 本机可选（CI 用固定 0.11.0）。
+前置依赖与 macOS 同构——Node.js `^22.19 || >=24`（**需含开发头文件**，部分发行版包另装 `nodejs-dev` 或 `node-headers`）、`build-essential`（提供 `cc`）、corepack。`shellcheck` 本机可选（CI 用固定 0.9.0）。
 ⚠️ 已知一次 boot 竞态（harness 上游，非平台特有）：偶发崩在 `cannot get property "webServer" without inject`，**重跑 `make dev` 一次即可**，详见 [docs/backlog.md](docs/backlog.md) B13。
 
 - 插件开发：[docs/plugin-dev.md](docs/plugin-dev.md)

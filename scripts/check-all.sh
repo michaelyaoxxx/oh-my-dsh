@@ -67,10 +67,10 @@ check_catalog()    { run "组件目录校验回归（每条规则都有会失败
 # pin 校验**要联网**（fetch 各 submodule 的远端 ref），故与离线组分开——
 # 合并会让「不联网的便宜门」被网络问题拖住，破坏「最便宜的最先失败」。
 # 静态检查（shellcheck）在下方以内联方式处理：本地用已装版本，缺失则跳过；
-# CI 用固定 0.11.0 的下载 + checksum 校验，故不并入本脚本的命令清单。
+# CI 用固定 0.9.0 的下载 + checksum 校验，故不并入本脚本的命令清单。
 check_pins() { run "submodule pin 校验（需联网 fetch）" bash scripts/check-pins.sh; }
 check_shellcheck() {
-  printf '\n==> shellcheck -S style（CI 固定 0.11.0；本地用已安装版本）\n'
+  printf '\n==> shellcheck -S style（CI 固定 0.9.0；本地用已安装版本）\n'
   if ! command -v shellcheck >/dev/null 2>&1; then
     printf '  \033[33m—\033[0m shellcheck 未安装，跳过（CI 会跑固定版本，见 verify.yaml）\n'
     return 0

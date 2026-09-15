@@ -24,6 +24,10 @@ dsh() {
   ( cd "$ROOT/harness" && CI=true pnpm dsh "$@" )
 }
 
+# SC2015：右支 { echo 错误; exit 1; } 必然退出，故"A && B || C" 的潜在副作用
+# （A 为真时 C 也可能执行）在此不构成问题——C 真执行了也是报错退出，语义等价
+# 「守卫失败即退出」。窄范围豁免。
+# shellcheck disable=SC2015
 [ -f "$ROOT/harness/package.json" ] && [ -d "$ROOT/harness/node_modules" ] || {
   echo "错误: harness 未构建，先运行 make setup" >&2
   exit 1

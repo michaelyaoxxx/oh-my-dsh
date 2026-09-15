@@ -88,7 +88,7 @@ CI 的 step 0 调同一条命令的 `--offline`。**改完先跑它**；下表�
 
 | 改动区域 | 必须做（额外的） |
 | --- | --- |
-| `scripts/*.sh`、`deploy/*` | `shellcheck -S style scripts/*.sh deploy/remote-install.sh` 全绿（CI 固定 0.11.0） |
+| `scripts/*.sh`、`deploy/*` | `shellcheck -S style scripts/*.sh deploy/remote-install.sh` 全绿（CI 固定 0.9.0） |
 | `config/components.json` / `.gitmodules` | 改了**组件集合或 license** 时**先** `node scripts/gen-notices.mjs` 重新生成声明文件——它是**合规文档**，不改就会让 `make check` 的 `--check` 失败（有意的） |
 | `scripts/check-components.mjs` / `scripts/check-licenses.mjs`（**门禁逻辑本身**） | ⚠️ 改了判定逻辑就**必须**跑 `bash scripts/probe-license-gate.sh` 确认覆盖边界没退化——它是这两道门的**回归基线**（人读用默认模式；`make check` 已用 `--strict` 把它纳入，不符即失败）。⚠️ 它防不住**蓄意**攻击者：能改门禁的人也能改它，真正的解法是门禁脚本从受信 ref 取 |
 | `patches/*.yml` | `make link-plugins` 后 `dsh --profile dsh --dump-config`，确认没有 patch 抹掉旁键 |

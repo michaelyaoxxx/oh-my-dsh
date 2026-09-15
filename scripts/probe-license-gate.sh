@@ -90,15 +90,15 @@ EOF
 # 会报 SC2329「函数从未被调用」——是假阳性，不是死代码。
 # （实测：本文件末尾**有没有** `exit 0` 会翻转这条报告的触发，属 linter 分析边界，
 #   不是代码问题。保留显式 exit 0，用窄范围豁免而不是靠"别写 exit"绕开。）
-# shellcheck disable=SC2329
+# shellcheck disable=SC2329,SC2317
 x_gpl_license() { printf '%s\n' "$GPL_TEXT" > "$TMP/plugins/evil/LICENSE"; }
-# shellcheck disable=SC2329
+# shellcheck disable=SC2329,SC2317
 x_embedded_gpl() {
   mkdir -p "$TMP/plugins/evil/src"
   printf '/* This program is free software: you can redistribute it and/or modify it\n   under the terms of the GNU General Public License as published by the FSF. */\nexport const x = 1\n' \
     > "$TMP/plugins/evil/src/index.js"
 }
-# shellcheck disable=SC2329
+# shellcheck disable=SC2329,SC2317
 x_gpl_dep() {
   mkdir -p "$TMP/plugins/evil/node_modules/gpltrap"
   printf '{"name":"gpltrap","license":"GPL-3.0"}' > "$TMP/plugins/evil/node_modules/gpltrap/package.json"

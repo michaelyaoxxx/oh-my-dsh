@@ -47,6 +47,9 @@ expected_pnpm() {
   node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));const m=p.packageManager||"";console.log(m.startsWith("pnpm@")?m.slice(5):m)' "$1/package.json"
 }
 actual_pnpm() {
+  # SC2015："A && B || C" 的右支是无条件容错（cd 失败或 pnpm 版本探测失败都容忍，
+  # 经命令替换返回空串，由调用方 check_pnpm 判定），语义正是想要的，非反模式。
+  # shellcheck disable=SC2015
   ( cd "$1" && pnpm --version 2>/dev/null || true )
 }
 check_pnpm() {

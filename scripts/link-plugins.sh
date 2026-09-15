@@ -50,6 +50,10 @@ done <<< "$_excluded"
 # packageManager。本仓根没有 package.json，corepack 会回落 latest（pnpm 12.x 的
 # bin 布局与本机 Node 的 corepack 不兼容）。在 $DSH_HOME 放一个只含 packageManager
 # 的 package.json 作锚点，钉住 harness 自己使用的 pnpm 版本。
+# SC2015：右支 { echo 错误; exit 1; } 必然退出，故"A && B || C" 的潜在副作用
+# （A 为真时 C 也可能执行）在此不构成问题——C 真执行了也是报错退出，语义等价
+# 「守卫失败即退出」。窄范围豁免，不改写成 if（保持两处镜像一致）。
+# shellcheck disable=SC2015
 [ -f "$ROOT/harness/package.json" ] && [ -d "$ROOT/harness/node_modules" ] || {
   echo "错误: harness 未构建，先运行 make setup" >&2
   exit 1
