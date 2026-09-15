@@ -31,7 +31,9 @@ export DSH_HOME="${DSH_HOME:-$ROOT/.dsh}"
 # 退化为**空排除列表**——而"空列表"的含义是"没有任何组件被排除"，与失败正好相反。
 # 这正是本脚本最需要目录保护的地方：dsh-tui 是唯一 runtimeScope=excluded 的组件，
 # 排除集一空，它就会被下面的候选收集捞进来挂到 profile dsh、把 web 环境弄坏
-# （同 deploy/remote-install.sh:39-42 的警告）。ADR-0005：高风险消费者不得 fail open。
+# （同 deploy/remote-install.sh 里「不挂进本 profile 的包」那段注释——它写着同一件
+#  "把 web 环境弄坏"的后果。**刻意不写行号**：行号会随注释增删漂移，本项目已为此踩过多次。）
+# ADR-0005：高风险消费者不得 fail open。
 # ⚠️ 必须用 $() 显式捕获并判 rc：`done < <(cmd)` **拿不到** cmd 的退出码
 #    （进程替换的状态被丢弃），只删掉 `|| true` 只会让错误从"静默"变成"stderr 有字"，
 #    脚本照样带着空排除集往下跑——实测过，别改回去。

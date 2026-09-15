@@ -1,6 +1,9 @@
 # dsh · DeepSeek Harness 超级仓库
 
-以 git submodule 编排 DSH 主仓库与插件仓库，承载环境搭建、部署、发布快照与插件开发。设计见 [docs/superpowers/specs/](docs/superpowers/specs/)。
+以 git submodule 编排 DSH 主仓库与插件仓库，承载环境搭建、部署、发布快照与插件开发。
+**当前的设计依据**见 [docs/cicd/README.md](docs/cicd/README.md)（CI/CD 规范）、
+[docs/cicd/adr/](docs/cicd/adr/)（决策记录）与 [config/README.md](config/README.md)（字段语义）。
+⚠️ `docs/superpowers/specs/` 是**历史、非权威**的早期设计稿，**不得作为实施依据**（见 [AGENTS.md](AGENTS.md)）。
 
 ## 快速上手（本地 macOS M4）
 
@@ -38,7 +41,7 @@ make dev       # 启动 DSH Web（$DSH_HOME=./.dsh，插件 link 挂载，改插
 | `.dsh/` | DSH 运行主目录（`$DSH_HOME`，运行时生成，gitignore） |
 | `scripts/` | 编排脚本（Makefile 是薄入口） |
 | `deploy/` | systemd unit + 服务器安装脚本 + hosts 模板 |
-| `docs/` | 部署手册、插件开发指南、远程访问；`superpowers/specs/` 存设计文档 |
+| `docs/` | 部署手册、插件开发指南、远程访问、CI/CD 规范与 ADR；`superpowers/specs/` 是**历史、非权威**的早期设计稿 |
 | `.github/workflows/` | verify（pin 校验 + 冒烟）/ release（tag → GitHub Release） |
 
 ## 许可
