@@ -72,6 +72,15 @@ export const FIELD_CLASS = {
   notes: 'declared',
 }
 
+// FIELD_CLASS 的**值**是受控词表。只查字段名、不查值，是**同一形态的 fail-open**：
+// 登记了字段名却把类别拼成 'operationall'，会让 `FIELD_CLASS[f] === 'operational'`
+// 这类消费者把它**静默当作「非 operational」**——分类失效，却不报错。
+// 实测过：没有下面那段校验时，把一条值改成 'operationall' 仍然 rc=0 通过。
+//
+// derived 是**合法值**（权威源在别处，本目录不持有），虽然目前无字段使用——
+// 别把它当成拼写错误删掉：那会让将来第一个 derived 字段无路可走。
+const FIELD_CLASS_VALUES = ['operational', 'declared', 'derived']
+
 const REQUIRED_FIELDS = [
   'name', 'path', 'sourceAuthority', 'pinPolicy', 'pinRef',
   'ciScope', 'releaseScope', 'runtimeScope', 'platforms', 'prepareMode',
@@ -154,9 +163,26 @@ function checkLicenseDeclarations(components) {
   return { checked, skipped }
 }
 
+// 校验 FIELD_CLASS **自身**（schema 级元数据），与组件数据无关，故在组件循环之前跑。
+// 文案刻意与「字段名未登记」区分开：**这是两个不同错因**（名字没登记 vs 类别拼错），
+// 合并成一条会把读者引去改错地方。
+function checkFieldClassValues() {
+  for (const [field, cls] of Object.entries(FIELD_CLASS)) {
+    if (!FIELD_CLASS_VALUES.includes(cls)) {
+      fail(
+        `FIELD_CLASS 里字段 ${JSON.stringify(field)} 的**类别值**非法: ${JSON.stringify(cls)}。` +
+          `允许：${FIELD_CLASS_VALUES.join(' / ')}。` +
+          `（注意这**不是**"字段名未登记"——字段名已登记，是它的类别拼错了。）`,
+      )
+    }
+  }
+}
+
 function validate(catalog) {
   const { components } = catalog
   const seen = new Set()
+
+  checkFieldClassValues()
 
   for (const c of components) {
     const where = c?.name ? `组件 ${c.name}` : '（无名组件）'
@@ -164,8 +190,10 @@ function validate(catalog) {
       if (!(f in c)) fail(`${where} 缺字段 ${f}`)
     }
     // ⚠️ 判据必须用 Object.hasOwn，**不能用 `f in FIELD_CLASS`**。
-    // 理由是实测的、不是洁癖：`in` 会**沿原型链**查找，于是 Object.prototype 的成员名
-    // （constructor / toString / hasOwnProperty / valueOf / __proto__）会被判成"已登记分类"
+    // 理由是实测的、不是洁癖：`in` 会**沿原型链**查找，于是 Object.prototype 的**全部 12 个**
+    // own property 名字（constructor / toString / hasOwnProperty / valueOf / __proto__ /
+    // isPrototypeOf / propertyIsEnumerable / toLocaleString / __defineGetter__ / __defineSetter__ /
+    // __lookupGetter__ / __lookupSetter__）会被判成"已登记分类"
     // 而**静默放行**——正好绕过本规则要拦的那件事，规则就没兑现它承诺的事。
     // 这不是理论风险：`constructor` / `toString` 是人会真取的字段名；且实测它们能一路
     // 穿过 `{...base, ...over}` + JSON 往返，作为**组件自己的键**进到这里。

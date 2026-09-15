@@ -159,8 +159,11 @@ write_gitmodules "plugins/ok"
 run_case "B2 出现未登记分类的字段"          CAUGHT
 
 # B3/B4：**原型链名字**。判据若写成 `f in FIELD_CLASS`，`in` 会沿原型链命中
-# Object.prototype 的成员（constructor / toString / hasOwnProperty / valueOf / __proto__），
-# 把这 5 个名字误判成"已登记分类"而**放行**——即本任务这条新规则自己有 5 个口子可绕。
+# Object.prototype **全部 12 个** own property 名字——constructor / toString /
+# hasOwnProperty / valueOf / __proto__ / isPrototypeOf / propertyIsEnumerable /
+# toLocaleString / __defineGetter__ / __defineSetter__ / __lookupGetter__ / __lookupSetter__——
+# 把这 12 个名字误判成"已登记分类"而**放行**，即本任务这条新规则自己有 12 个口子可绕。
+# （数一遍：node -e 'console.log(Object.getOwnPropertyNames(Object.prototype).length)'）
 # 这里把「必须用 hasOwn 而非 in」这个性质**钉住**：将来有人改回 `in`，本用例必须变红。
 # ⚠️ 别删：它是这条规则唯一的防退化装置（实测过：改成 `in` 时 B3/B4 双双假过）。
 write_catalog "[$(good_component ok plugins/ok '{"constructor":1}')]" 2
@@ -169,6 +172,31 @@ run_case "B3 原型链名 constructor（须拒）"   CAUGHT
 write_catalog "[$(good_component ok plugins/ok '{"__proto__":1}')]" 2
 write_gitmodules "plugins/ok"
 run_case "B4 原型链名 __proto__（须拒）"     CAUGHT
+
+# B5：FIELD_CLASS 的**值**必须在受控词表内（operational / declared / derived）。
+# 这条**无法**靠改 catalog 造出来——FIELD_CLASS 是校验器**源码里的常量**，catalog 里没有它。
+# 所以改为变异**校验器副本**：只改 $TMP 里那份，**本仓源码一个字节都不动**。
+# 变异必须**确认生效**：改不中就经 T1 的构造失败通道判红，而不是让用例假过——
+# 若锚点将来漂移，本用例会**响亮地失败**（构造错误横幅），不会静默变绿。
+write_catalog "[$(good_component ok plugins/ok)]" 2
+write_gitmodules "plugins/ok"
+VALIDATOR="$TMP/scripts/check-components.mjs"
+sed "s/^  license: 'operational',$/  license: 'operationall',/" "$VALIDATOR" > "$VALIDATOR.mut"
+if grep -q "'operationall'" "$VALIDATOR.mut"; then
+  mv "$VALIDATOR.mut" "$VALIDATOR"
+else
+  rm -f "$VALIDATOR.mut"
+  record_construct_error "B5 变异未生效：没能在校验器副本里改出 'operationall'（锚点已漂移？本用例结果不可信）"
+fi
+run_case "B5 FIELD_CLASS 值拼错（须拒）"    CAUGHT
+# 还原副本：后面的用例必须跑在**未变异**的校验器上（否则它们会因 B5 的变异而假红）。
+cp "$ROOT/scripts/check-components.mjs" "$VALIDATOR"
+# B5b 是**还原哨兵**：B5 把校验器副本变异过，若还原失败，本用例会立刻变红
+# （干净 catalog 被变异体拒掉）。别删——今天 B5 之后没有别的用例，删了它
+# 从现在到 T4 加用例之间的这段时间里，变异泄漏不会有任何信号。
+write_catalog "[$(good_component ok plugins/ok)]" 2
+write_gitmodules "plugins/ok"
+run_case "B5b 变异已还原（基线，应通过）"    GAP
 
 echo
 if [ "$STRICT" = 1 ] && [ "$FAILED" -ne 0 ]; then
