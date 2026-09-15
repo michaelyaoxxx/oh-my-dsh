@@ -243,10 +243,12 @@ plugin_install() { # $1=目录 $2=安装子命令（pnpm 用 install，npm 用 c
 #    不跑 validate() 的 materialized / license 阶段：服务器侧的树**没有 git 元数据**
 #    （scripts/deploy-remote.sh 的 rsync 带 `--exclude '.git'`），而 materialized 阶段会对
 #    tracked-prebuilt 组件（dsh-automation、dsh-at-file）跑 `git -C <dir> ls-files` 判入口
-#    跟踪状态——在没有 .git 的树上一律失败，于是**每一次部署都会死在这一步**。
-#    那两个不变量问的是「fresh clone 上组件还能用吗」，只有带 git 的 checkout 能回答，
-#    服务器树答不了；catalog 阶段不读子仓，正是这里该用的口径。
-#    （实测：服务器树模拟下 validate() rc=1、`--plan` rc=0，见 task-9-report.md。）
+#    跟踪状态——在没有 .git 的树上**无法判定**（不是"一律失败"：非严格模式下它记为
+#    「因 git 元数据不可用而无法判定」并 rc=0；但严格模式下 skip 即失败 ⇒ rc=1）。
+#    ⚠️ **别把它当成"漏了一步"去补**：那个 rc=1 是**必然**的，在服务器侧加
+#    `--require-materialized` 会让每一次部署都失败。最后能查动它的地方是**本地**
+#    （scripts/deploy-remote.sh，源树有 git），已在那边挂了这条校验。
+#    完整论述（含实测数字与分工表）见 config/README.md 的「部署树跑不了 materialized」一节。
 if ! PREPARE_PLAN="$(node "$ROOT/scripts/check-components.mjs" --plan prepare)"; then
   echo "错误: 组件目录校验失败（见上）。请先修正 config/components.json 与 .gitmodules 的一致性。" >&2
   exit 1
