@@ -1,0 +1,31 @@
+# 禁用 base 带的 plugin-package-inventory-deepseek。两个理由，第一个是 P0。
+#
+# ① 它会让**每一个 DeepSeek 请求**失败。
+#    它的 prepare() 遍历组合树里所有活跃 entry，对裸包名走 barePackageManifest——
+#    用的是 `createRequire(anchor).resolve.paths()` + `existsSync`
+#    （harness/packages/llm/plugin-package-inventory-deepseek/src/index.ts:72），
+#    解析不到就**直接 throw**（同文件 :117）。而这个解析面**不是 loader 的解析面**：
+#    本仓 patches/mount-logger-console.yml 挂的 `@deepseek-ai/cordis-plugin-logger-console`
+#    是 harness 的 vendor 包（harness/vendor/logger-console），loader 解析得到
+#    （所以 boot 正常、日志正常渲染），但从 profile 或 harness 出发的 createRequire
+#    都解析不到——实测 .dsh/profiles/node_modules/@deepseek-ai/ 下有 cordis-plugin-group /
+#    hmr / include / loader / timer，**唯独没有 logger-console**。
+#    throw 被 llm-deepseek 包装成 REQUEST_EXTENSION（llm-deepseek/src/adapter.ts:636），
+#    表现为 turn/end.reason.kind = "error"、code = "REQUEST_EXTENSION"，
+#    且 **log/ 里一个字都没有**（实测：该错误串在任何 dev 日志中零命中——
+#    是靠 loongsuite-observability 插件的 OTLP span 才捞出来的）。
+#    A/B（同 harness、同 loongsuite 插件）：headless profile 无 logger-console entry
+#    → turn 成功；dsh profile 有 → 连续两次失败。本插件在成功的那一侧。
+#
+# ② 它每次请求都把一个 `plugin_packages` 字段——本机**启用插件的名字与版本**——发给
+#    DeepSeek。这是默认开启的外发，台账 R7（遥测数据驻留）本就悬空，不该在没人注意时发生。
+#
+# 为什么用 disabled 而不是 config 的 enabled: false：两者都能消除 ①，但 disabled 让该
+# entry 根本不进树（activeEntries 会过滤掉 disabled），连解析都不会发生——即使将来 harness
+# 改了它的配置 schema 也踩不回来。name 作 mismatch 防护：base 若改行会 warn。
+#
+# 解禁条件：harness 让 barePackageManifest 走 loader 的解析根（或让 vendor 包可从 profile
+# 解析），且我们决定接受 ② 的外发。
+- id: plugin-package-inventory-deepseek
+  name: '@deepseek-ai/dsh-plugin-package-inventory-deepseek'
+  disabled: true
