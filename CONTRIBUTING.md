@@ -30,11 +30,15 @@ CI/CD 设计的权威入口是 [docs/cicd/README.md](docs/cicd/README.md)。
 ## 提交前自检
 
 ```sh
-make setup                 # 或至少确认 harness 已构建
-bash scripts/check-components.mjs   # 组件目录 ↔ .gitmodules 双向一致
-bash scripts/check-pins.sh          # pin 校验（--drift 看落后情况，不阻断）
+make setup                            # 或至少确认 harness 已构建
+node scripts/check-components.mjs     # 组件目录 ↔ .gitmodules 双向一致 + license 核对
+bash scripts/check-pins.sh            # pin 校验（--drift 看落后情况，不阻断）
+node scripts/gen-notices.mjs --check  # 第三方声明是否与组件目录一致（改组件/license 后需重新生成）
 shellcheck -S style scripts/*.sh deploy/remote-install.sh
 ```
+
+> 上面第一条曾是 `bash scripts/check-components.mjs`——**用 bash 跑 .mjs 会以退出码 2 失败**
+> （bash 把 JS 当 shell 解释）。已修正为 `node`。
 
 改了 submodule 的 pin 时，**必须同步更新 [config/components.json](config/components.json)**——
 否则 CI 会在第一步就失败（双向校验会指出哪个组件对不上）。

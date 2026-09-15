@@ -16,7 +16,7 @@
       "packageManager": "pnpm",
       "testProfile": "vitest",
       "stateSchema": "harness-owned",
-      "license": "unknown",
+      "license": "MIT",
       "notes": "DSH 内核。build 含 build:native-system，需 C 编译器与 Node 开发头文件；产物严禁跨平台拷贝。"
     },
     {

@@ -14,7 +14,8 @@ make dev       # 启动 DSH Web（$DSH_HOME=./.dsh，插件 link 挂载，改插
 - 插件开发：[docs/plugin-dev.md](docs/plugin-dev.md)
 - 远程部署：[docs/deploy.md](docs/deploy.md)
 - 远程访问（在外用手机/另一台电脑）：[docs/remote-access.md](docs/remote-access.md)（含第三方方案尽调 [docs/dsh-remote.md](docs/dsh-remote.md)）
-- 遗留问题：[docs/backlog.md](docs/backlog.md)（未收口事项的单一追踪处）
+- 遗留问题：[docs/backlog.md](docs/backlog.md)（**还欠什么**，完成即删）
+- 整改台账：[docs/remediation-plan.md](docs/remediation-plan.md)（**做过什么**，T×R 映射与证据）
 - **CI/CD 权威入口**：[docs/cicd/README.md](docs/cicd/README.md)（Gerrit + Jenkins + Nexus；当前目标是内网主链，GitHub Actions 仅作开源预留）
 - 组件清单：[config/components.json](config/components.json)（谁参与 CI、谁进制品的事实源）
 - 贡献指南：[CONTRIBUTING.md](CONTRIBUTING.md) ・ 安全策略：[SECURITY.md](SECURITY.md)
@@ -39,3 +40,14 @@ make dev       # 启动 DSH Web（$DSH_HOME=./.dsh，插件 link 挂载，改插
 | `deploy/` | systemd unit + 服务器安装脚本 + hosts 模板 |
 | `docs/` | 部署手册、插件开发指南、远程访问；`superpowers/specs/` 存设计文档 |
 | `.github/workflows/` | verify（pin 校验 + 冒烟）/ release（tag → GitHub Release） |
+
+## 许可
+
+本仓（superproject 自身的 `Makefile`、`scripts/`、`deploy/`、`patches/`、`config/`、`docs/`、`.github/`）
+以 **Apache License 2.0** 授权，全文见 [LICENSE](LICENSE)。
+
+`harness/` 与 `plugins/*` 是 **submodule**——它们各自携带自己的许可证，**不**由本仓的 LICENSE 覆盖。
+各组件许可证、来源与是否进制品见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)（自动生成，勿手改）。
+
+> ⚠️ 含 **AGPL-3.0** 组件的制品，整个制品须按 AGPL-3.0 分发（AGPL 与 Apache-2.0 只单向兼容）。
+> 当前 AGPL 组件的制品状态见上方声明文件。

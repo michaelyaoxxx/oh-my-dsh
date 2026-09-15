@@ -52,7 +52,7 @@
 | 改动区域 | 必须做 |
 | --- | --- |
 | `scripts/*.sh`、`deploy/*` | `shellcheck -S style scripts/*.sh deploy/remote-install.sh` 全绿（CI 固定 0.11.0） |
-| `config/components.json` / `.gitmodules` | `node scripts/check-components.mjs` + `bash scripts/check-pins.sh` |
+| `config/components.json` / `.gitmodules` | `node scripts/check-components.mjs` + `bash scripts/check-pins.sh`；**改了组件集合或 `license` 还要** `node scripts/gen-notices.mjs`（声明文件是**合规文档**，`--check` 会拒绝过期内容） |
 | `patches/*.yml` | `make link-plugins` 后 `dsh --profile dsh --dump-config`，确认没有 patch 抹掉旁键 |
 | `.github/workflows/*` | Action **pin 到 commit SHA** 并注明版本；下载第三方产物必须校验 checksum |
 | `docs/cicd/*` | 它是 CI/CD 规范源；改动须说明影响的阶段/Job/脚本/凭据/回滚路径 |

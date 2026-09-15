@@ -32,11 +32,21 @@ const ENUM = {
   runtimeScope: ['required', 'excluded'],
   buildMode: ['source-build', 'prebuilt-verified', 'no-build'],
   platforms: ['linux-x86_64', 'macos-arm64'],
+  // SPDX 标识符。**刻意不含 `unknown`**：本字段进 THIRD-PARTY-NOTICES.md（合规文档），
+  // 「unknown」在那里等于没写。实测本仓正踩过这个坑——harness 长期记作 unknown，
+  // 而其 package.json 与 LICENSE 都明确是 MIT。宁可让登记人停下来查清楚。
+  // 新许可证请显式加进本表，别绕过。
+  license: [
+    'MIT', 'Apache-2.0', 'AGPL-3.0', 'GPL-3.0', 'LGPL-3.0',
+    'BSD-2-Clause', 'BSD-3-Clause', 'ISC', 'MPL-2.0', 'Unlicense',
+  ],
 }
 const REQUIRED_FIELDS = [
   'name', 'path', 'sourceAuthority', 'pinPolicy', 'pinRef',
   'ciScope', 'releaseScope', 'runtimeScope', 'platforms', 'buildMode',
   'packageManager', 'testProfile',
+  // license 同样是必需字段：缺失会在生成的声明文件里留下空洞，而那是合规文档。
+  'license',
 ]
 
 const fail = (msg) => { console.error(`✗ ${msg}`); process.exitCode = 1 }
@@ -63,6 +73,43 @@ function gitmodulesPaths() {
     { cwd: ROOT, encoding: 'utf8' },
   )
   return out.split('\n').filter(Boolean).map((l) => l.trim().split(/\s+/).slice(1).join(' '))
+}
+
+// 组件目录里的 license 是**我们的声明**；组件自己的 package.json 是**它的声明**。
+// 不一致时错的多半是我们：实测 harness 长期记作 unknown，而其 package.json 与
+// LICENSE 都明确是 MIT。这个字段会进 THIRD-PARTY-NOTICES.md——一份合规文档，
+// 错了没人会发现，所以必须有机器校验。
+//
+// 子仓未初始化 / 组件无 package.json 时**静默跳过**：本检查不引入「先跑 make setup」
+// 的前置依赖（同 check-components.mjs 顶部那条设计约束）。
+function checkLicenseDeclarations(components) {
+  let checked = 0
+  let skipped = 0
+  for (const c of components) {
+    if (!c.license) continue
+    let pkg
+    try {
+      pkg = JSON.parse(readFileSync(join(ROOT, c.path, 'package.json'), 'utf8'))
+    } catch {
+      skipped++
+      continue
+    }
+    const declared =
+      pkg.license ??
+      (Array.isArray(pkg.licenses) ? pkg.licenses.map((l) => l?.type).filter(Boolean).join(' OR ') : undefined)
+    if (declared === undefined) {
+      skipped++
+      continue
+    }
+    checked++
+    if (declared !== c.license) {
+      fail(
+        `组件 ${c.name} 的 license 不一致：组件目录=${c.license}，其 package.json=${declared}。` +
+          `以组件自己的声明为准修正 config/components.json（该字段会进 THIRD-PARTY-NOTICES.md）。`,
+      )
+    }
+  }
+  return { checked, skipped }
 }
 
 function validate(catalog) {
@@ -98,8 +145,11 @@ function validate(catalog) {
     if (!inGitmodules.has(p)) fail(`组件目录有 ${p}，但 .gitmodules 未收录（组件已被移除？请同步删除该条）`)
   }
 
+  const lic = checkLicenseDeclarations(components)
+
   if (!process.exitCode) {
     console.log(`✓ 组件目录校验通过：${components.length} 个组件，与 .gitmodules 双向一致`)
+    console.log(`  （license 与组件自身声明核对：${lic.checked} 个一致；${lic.skipped} 个跳过——子仓未初始化或无 package.json）`)
     const excluded = components.filter((c) => c.runtimeScope === 'excluded')
     if (excluded.length) console.log(`  （runtimeScope=excluded：${excluded.map((c) => c.name).join(', ')}）`)
   }

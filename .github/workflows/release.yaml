@@ -28,6 +28,9 @@ jobs:
       - name: Check component pins
         run: |
           node scripts/check-components.mjs
+          # 建 Release 就是**对外分发**的时刻：声明文件此时必须是准的，
+          # 且 AGPL 组件的制品状态必须在发布前被机器确认，而不是靠记忆。
+          node scripts/gen-notices.mjs --check
           bash scripts/check-pins.sh
       # 干净构建 + link + 冒烟，通过才建 Release
       - name: Build & smoke
