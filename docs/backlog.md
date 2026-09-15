@@ -30,6 +30,7 @@
 | B4 | **新装插件的 UI 验收未做** | modsearch（搜索 + fetch）、dsh-at-file、dsh-agent-teams、dsh-market、modlens 等挂上了但未逐个走查 | 在 `make dev` 里逐个过主要交互 |
 | B6 | **dsh-TUI 的 macOS 路径长度缺陷应报上游** | 其 `scripts/verify-inject-channel.mjs` 用 `os.tmpdir()`，macOS 下 unix socket 路径达 105 字节 > `sun_path` 上限 104 → `listen EINVAL`。本仓已用 `TMPDIR=/tmp` 绕行 | 报给 ccch1mneyyy/dsh-TUI（建议短路径或建 socket 前检查长度） |
 | B7 | **本仓 CI 不跑任何 submodule 测试** | 实测：harness 962 个测试文件、9 个插件合计 700+，而 CI 里一个都没跑（只有 pin / shellcheck / 构建 / 冒烟） | 按 [CI/CD 测试策略](cicd/04-test-strategy.md) 与[迁移阶段](cicd/01-architecture.md#12-迁移与验收阶段)落地版本化测试 catalog、根仓测试入口和发布回归 |
+| B10 | **`mount-logger-console` 挂的 vendor 包按裸名注册，任何用 `createRequire` 遍历 entry 的 harness 组件都会再撞** | 已撞到一个：`plugin-package-inventory-deepseek` 的 `barePackageManifest` 解析不到 `@deepseek-ai/cordis-plugin-logger-console` → throw → **每个 DeepSeek 请求都失败**，且错误**不进任何日志**（2026-09-15 实测，靠 loongsuite 插件的 OTLP span 才发现）。已用 [patches/disable-plugin-package-inventory.yml](../patches/disable-plugin-package-inventory.yml) 禁用该插件消除故障。**但只知道这一个 consumer**，没有系统性排查手段——见 [plugin-dev.md](plugin-dev.md) 常见问题同名条目 | 二选一：① 把该 entry 改成**路径形式**挂载（`barePackageName` 对含 `/` 的返回 `undefined` → 走 `nearestManifest`、**不抛**）；障碍是绝对路径不可移植（本地 macOS 与服务器 Linux 共用同一份 patch），需先验 loader 接受哪种写法。② 上报 harness，请其让 `barePackageManifest` 走 loader 的解析根。⚠️ **出现「与插件无关的功能莫名失败」时先怀疑这条**：`dsh --dump-config` 看该 entry 有没有被牵进去 |
 
 ---
 
