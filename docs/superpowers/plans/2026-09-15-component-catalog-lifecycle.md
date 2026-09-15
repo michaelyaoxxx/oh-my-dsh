@@ -1245,8 +1245,14 @@ Expected: `0`
 
 Run: `bash -c 'bash scripts/setup.sh 2>&1 | grep -E "跳过准备|安装依赖|构建:|跳过构建" | head -30'`
 Expected: **`<N>` 个组件各出现一次**（`<N>` = `node scripts/check-components.mjs --plan prepare | wc -l`，目前 10；
-**别把数字写进断言**——组件集合会变）；`plugins/dsh-tui` **不出现**；
+**别把数字写进断言**——组件集合会变）；`plugins/dsh-tui` **不出现*在准备输出里***
+（即不得有 `安装依赖: plugins/dsh-tui` / `构建: plugins/dsh-tui` / `跳过构建: plugins/dsh-tui`）；
 `dsh-agent-teams` 有 `构建:` 行（存量修正后它是 source-build）；`dsh-at-file` 是 `跳过构建:`。
+
+> ⚠️ **`dsh-tui` 仍会出现在别处，那三处是正常的**，别为了"让它不出现"去改：
+> ① `git submodule sync` 的输出；② pnpm 版本报告循环（`==> plugins/dsh-tui 使用 pnpm@…`，
+> 它对**所有** subrepo 报 corepack 解析，与是否进入准备无关）；③ 校验器的 `runtimeScope=excluded` 诊断。
+> （实测：`make setup` 输出里 dsh-tui 共出现 8 次，全部属于这三处。）
 
 > ⚠️ 若不想真跑完整 setup（会重装依赖），改为只验证计划：
 > `node scripts/check-components.mjs --plan prepare` 应输出 `<N>` 行（目前 10），其中
