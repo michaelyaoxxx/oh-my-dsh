@@ -147,7 +147,7 @@ mkdir -p plugins "$DSH_HOME/profiles"
 #    **逐字节相同**（11 个函数），而**没有任何门禁保证它们同步**——make check 只静态检查
 #    目录查询那一行的形态。改动必须**两处一起改**：已有的先例是 `ret=$?` 的 fail-open
 #    必须修两次才对齐（a4a3808 修 setup、a25af8b 修 remote）。合并成共享库需要单独的设计
-#    （评审 X-1：.superpowers/sdd/2026-09-15-component-catalog-lifecycle/task-8-9-review.md §8）。
+#    （评审 X-1；已登记进 docs/backlog.md 的 B11——**别引用草稿目录，那条路径不在仓里**）。
 # 无 packageManager 的插件仓（如 modlens、dsh-market）corepack 在仓内回落 latest 不可靠；
 # 经 harness 目录解析 harness pin 的 pnpm（服务器上 corepack 同样按 harness packageManager
 # 解析），--dir 让命令仍在插件仓内执行。install 与 build 同此路径——按调用点各写一遍判定

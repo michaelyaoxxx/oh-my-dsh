@@ -102,7 +102,7 @@ done
 #    **逐字节相同**（11 个函数），而**没有任何门禁保证它们同步**——make check 只静态检查
 #    目录查询那一行的形态。改动必须**两处一起改**：已有的先例是 `ret=$?` 的 fail-open
 #    必须修两次才对齐（a4a3808 修 setup、a25af8b 修 remote）。合并成共享库需要单独的设计
-#    （评审 X-1：.superpowers/sdd/2026-09-15-component-catalog-lifecycle/task-8-9-review.md §8）。
+#    （评审 X-1；已登记进 docs/backlog.md 的 B11——**别引用草稿目录，那条路径不在仓里**）。
 # dsh-web 是 pnpm workspace，自带 pnpm-lock.yaml → --frozen-lockfile 可行；
 # 根 package.json 有 build（pnpm -r build）。
 # 无 packageManager 的插件仓（如 modlens、dsh-market）corepack 在仓内向上找不到 pin 会回落
