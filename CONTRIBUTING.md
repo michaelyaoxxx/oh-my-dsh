@@ -31,7 +31,8 @@ CI/CD 设计的权威入口是 [docs/cicd/README.md](docs/cicd/README.md)。
 
 ```sh
 make setup                            # 或至少确认 harness 已构建
-node scripts/check-components.mjs     # 组件目录 ↔ .gitmodules 双向一致 + license 核对
+node scripts/check-components.mjs     # 声明层：组件目录 ↔ .gitmodules 双向一致 + license 词表 + 与 package.json 核对
+node scripts/check-licenses.mjs       # 内容层：读各组件 LICENSE 文件判是不是 copyleft
 bash scripts/check-pins.sh            # pin 校验（--drift 看落后情况，不阻断）
 node scripts/gen-notices.mjs --check  # 第三方声明是否与组件目录一致（改组件/license 后需重新生成）
 shellcheck -S style scripts/*.sh deploy/remote-install.sh
@@ -48,7 +49,8 @@ shellcheck -S style scripts/*.sh deploy/remote-install.sh
 | 改动区域 | 必须做 |
 | --- | --- |
 | `scripts/*.sh`、`deploy/*` | 上面的自检全跑；shellcheck 必须全绿（CI 用 `-S style`，固定 0.11.0） |
-| `config/components.json` | `check-components.mjs`（双向校验）+ `check-pins.sh` |
+| `config/components.json` | `check-components.mjs`（声明层：双向校验 + license 词表 + 与 `package.json` 核对）+ `check-licenses.mjs`（**内容层**：读各组件 LICENSE 判 copyleft）+ `check-pins.sh` |
+| `scripts/check-components.mjs` / `check-licenses.mjs`（**门禁逻辑本身**） | ⚠️ 改了判定逻辑**必须**跑 `bash scripts/probe-license-gate.sh` 确认覆盖边界没退化（它是这两道门的**回归基线**）。**不要把它放进 CI**——它恒 exit 0，回答的是「门禁覆盖什么」而非「这次合规吗」 |
 | `patches/*.yml` | `make link-plugins` 后 `dsh --profile dsh --dump-config`，确认**没有** patch 抹掉旁键（整表替换语义，见 plugin-dev.md） |
 | `.github/workflows/*`（**默认不改**） | CI/CD 载体是 Gerrit + Jenkins，`.github/workflows/` 只是开源预留通路。只有两类例外可改：供应链安全修复、把新校验挂到门禁上（**逻辑写在 `scripts/`**）。例外改动时另需：YAML 能解析；Action **pin 到 commit SHA** 并注明版本 |
 | `docs/cicd/*` | 它是 CI/CD 的规范源；改动需说明影响的阶段/Job/脚本/凭据/回滚路径 |
