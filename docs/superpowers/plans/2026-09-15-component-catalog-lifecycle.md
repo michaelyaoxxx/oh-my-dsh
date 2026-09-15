@@ -349,7 +349,9 @@ const REQUIRED_FIELDS = [
 - [ ] **Step 8: 跑全部校验**
 
 Run: `bash scripts/probe-catalog.sh && bash scripts/probe-license-gate.sh --strict && node scripts/check-components.mjs`
-Expected: 三份都通过；最后一条输出 `✓ 组件目录校验通过：10 个组件，与 .gitmodules 双向一致`
+Expected: 三份都通过；最后一条输出 `✓ 组件目录校验通过：<N> 个组件，与 .gitmodules 双向一致`
+（`<N>` 是**实际**组件数——目前 11。**别把数字抄进断言**：组件集合会变，
+计划里写死的数字正是 AGENTS.md 说的"会漂移的事实不在这里复制"。）
 
 - [ ] **Step 9: 重新生成 notices 并跑 make check**
 
@@ -424,8 +426,8 @@ Expected: `B2` 显示 `!! 与预期不符`（实测 GAP）。
 ```javascript
 // 字段分类：**schema 级元数据**，不是组件的属性。
 //
-// 为什么不给每个组件加 `status` 标记：同一个事实在 10 个组件里重复 10 遍，
-// 就是 10 个漂移点——正是本 ADR 要治的病。
+// 为什么不给每个组件加 `status` 标记：同一个事实在每个组件里重复一遍，
+// 就多一个漂移点——正是本 ADR 要治的病。（**不写具体条数**：组件集合会变。）
 //
 // 判据是「有没有**行为或门禁**消费者」，不是「有没有任何代码读它」：
 // gen-notices.mjs 会读 releaseScope/sourceAuthority 去**渲染声明**，那是展示，不构成保证。
@@ -877,7 +879,8 @@ Expected: 无 `!!`。
 ```bash
 node scripts/check-components.mjs --require-materialized
 ```
-Expected: 通过（本机子仓已初始化），输出含 `materialized 检查：10 个已验；0 个跳过`。
+Expected: 通过（本机子仓已初始化），输出含 `materialized 检查：<N> 个已验；0 个跳过`
+（`<N>` = 实际组件数，目前 11；**0 个跳过**才是要点——有跳过说明有子仓没初始化）。
 
 - [ ] **Step 7: 把 `--require-materialized` 挂进 CI 与 release**
 
@@ -1602,7 +1605,7 @@ Expected: 全部通过（项数比计划开始时多 1：新增的目录校验�
 node scripts/check-components.mjs                       # catalog 阶段
 node scripts/check-components.mjs --require-materialized  # materialized 阶段
 ```
-Expected: 两条都通过；第二条输出 `materialized 检查：10 个已验；0 个跳过`。
+Expected: 两条都通过；第二条输出 `materialized 检查：<N> 个已验；0 个跳过`（`<N>` = 实际组件数，目前 11）。
 
 - [ ] **Step 5: 提交**
 
