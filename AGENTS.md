@@ -16,7 +16,8 @@
 | 当前仓库结构与文档索引 | [README.md](README.md) |
 | 插件开发与常见问题（**改脚本前必读**） | [docs/plugin-dev.md](docs/plugin-dev.md) |
 | 部署手册 / 远程访问 | [docs/deploy.md](docs/deploy.md) / [docs/remote-access.md](docs/remote-access.md) |
-| 未收口事项 | [docs/backlog.md](docs/backlog.md) |
+| 未收口事项（还欠什么） | [docs/backlog.md](docs/backlog.md) |
+| **整改项状态与证据（T×R 台账，做过什么）** | [docs/remediation-plan.md](docs/remediation-plan.md) |
 | 贡献流程与安全策略 | [CONTRIBUTING.md](CONTRIBUTING.md) / [SECURITY.md](SECURITY.md) |
 
 `docs/superpowers/specs/` 下的旧设计文档已标注**历史、非权威**，不得作为实施依据。
