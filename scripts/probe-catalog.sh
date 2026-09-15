@@ -24,15 +24,27 @@ cp "$ROOT/scripts/check-components.mjs" "$TMP/scripts/"
 
 FAILED=0
 
-# 造一份最小 catalog。$1=components 数组的 JSON 文本
+# ── 构造失败通道 ─────────────────────────────────────────────────────────────
+# 为什么走**文件**而不是变量：构造发生在 `$(good_component ...)` 里，而命令替换是
+# **子 shell**——函数在里面设的变量出不来，失败会被静默吞掉。实测过的后果：
+# override 写坏 → good_component 抛错 → 命令替换为空 → catalog 变成 [] → 而
+# .gitmodules 非空 → 校验器因"双向集合不符"退出 1 → 期望 CAUGHT 的用例**假过**
+# （绿的，且理由是错的）。文件跨子 shell 存活，故失败经它上报，由 run_case 判为
+# **该用例失败**——这就是"构造失败即失败"。
+CONSTRUCT_ERR="$TMP/.construct-error"
+record_construct_error() { printf '%s\n' "$1" >> "$CONSTRUCT_ERR"; }
+
+# 造一份最小 catalog。$1=components 数组的 JSON 文本  $2=version
+# ⚠️ 两个参数都**必需**：$2 原先只在注释里写过 $1。实测单参调用的后果（不是推测）：
+#    `set -u` 报 `$2: unbound variable`，写出的 catalog 无法解析，校验器以 rc≠0 退出
+#    → 期望 CAUGHT 的用例**假过**。构造失败通道现在会把它抓住并判为**本用例失败**。
+# 用 printf 而不是 heredoc：非引用 heredoc 会展开载荷里的 $ / 反引号 / 反斜杠，
+# 静默写入与预期不同的 JSON；改成 <<'EOF' 又会让 $1 / $2 不再展开。两条都不行。
 write_catalog() {
-  cat > "$TMP/config/components.json" <<EOF
-{
-  "version": $2,
-  "description": "fixture",
-  "components": $1
-}
-EOF
+  [ -n "${1:-}" ] || { record_construct_error "write_catalog 缺 \$1（components 载荷）"; return 1; }
+  [ -n "${2:-}" ] || { record_construct_error "write_catalog 缺 \$2（version）"; return 1; }
+  printf '{\n  "version": %s,\n  "description": "fixture",\n  "components": %s\n}\n' "$2" "$1" \
+    > "$TMP/config/components.json"
 }
 
 # 造与 catalog 对应的 .gitmodules，让双向集合校验通过。
@@ -51,7 +63,10 @@ write_gitmodules() {
 # JSON.parse 取最后一个——"能跑"，但读者无法判断哪个生效，换成严格解析器还会静默改变
 # 语义。fixture 自己也该遵守「一个字段一个值」，否则它就在示范本计划要治的病。
 good_component() {
-  node -e '
+  local out
+  # 构造失败**必须留痕**：node 抛错（如 override 不是合法 JSON）时命令替换是空串，
+  # 调用方的 `[$(...)]` 就会写成空数组 [] ——见 record_construct_error 的注释。
+  if ! out="$(node -e '
     // 字段 = 当前校验器的 REQUIRED_FIELDS，取值形状对齐真实 config/components.json。
     // ⚠️ 这里要的是 buildMode / packageManager，**不是** config/README.md 里的
     //    prepareMode：后者是 T2 引入的 schema v2 才有的（届时删 packageManager、
@@ -67,7 +82,14 @@ good_component() {
     }
     const over = process.argv[3] ? JSON.parse(process.argv[3]) : {}
     process.stdout.write(JSON.stringify({ ...base, ...over }))
-  ' "$1" "$2" "${3:-}"
+  ' "$1" "$2" "${3:-}" 2>"$TMP/.gc-stderr")"; then
+    local why
+    why="$(grep -m1 -i 'error' "$TMP/.gc-stderr")"
+    [ -n "$why" ] || why="$(head -1 "$TMP/.gc-stderr")"
+    record_construct_error "good_component(name=$1 path=$2 overrides=${3:-}) 构造失败: $why"
+    return 1
+  fi
+  printf '%s' "$out"
 }
 
 run_case() { # $1=场景名  $2=期望(CAUGHT/GAP)
@@ -75,12 +97,20 @@ run_case() { # $1=场景名  $2=期望(CAUGHT/GAP)
   # 刻意不接"构造函数名"参数——兄弟脚本 probe-license-gate.sh 的 $6 是真被调用的，
   # 若这里也写一个同名参数却不用，后续任务照注释传函数名会**静默不执行构造**，
   # 造出与被测场景不符的 fixture，用例可能假过。
-  local name="$1" expect="$2" out rc got mark
+  local name="$1" expect="$2" out rc got mark="ok" cerr=""
+  # 构造失败即失败：fixture 已经建好了才轮到本函数，故先收错误再判定。
+  # 不收的话，坏 override 会让用例**假过**（绿的，理由却是"双向集合不符"）——
+  # 断言只到"退出码非 0"的粒度挡不住这个，本任务实测踩过。
+  if [ -s "$CONSTRUCT_ERR" ]; then cerr="$(cat "$CONSTRUCT_ERR")"; : > "$CONSTRUCT_ERR"; fi
   out="$(cd "$TMP" && node scripts/check-components.mjs 2>&1)"; rc=$?
   got="GAP"; [ "$rc" -ne 0 ] && got="CAUGHT"
-  mark="ok"; [ "$got" != "$expect" ] && { mark="!! 与预期不符"; FAILED=$((FAILED + 1)); }
+  if [ "$got" != "$expect" ]; then mark="!! 与预期不符"; FAILED=$((FAILED + 1)); fi
+  if [ -n "$cerr" ]; then mark="!! 构造失败——本用例结果不可信"; FAILED=$((FAILED + 1)); fi
   printf '  %-44s 期望=%-6s 实测=%-6s %s\n' "$name" "$expect" "$got" "$mark"
-  [ "$got" = "CAUGHT" ] && printf '       理由: %s\n' "$(printf '%s' "$out" | grep -m1 '✗' | cut -c1-80)"
+  [ -n "$cerr" ] && printf '       构造错误: %s\n' "$cerr"
+  # 构造失败时**不打印"理由"**：那时校验器跑的是上一用例残留的 catalog，它的拒因
+  # 与本用例无关，打出来会把读者引到错误的规则上（实测：会显示上一个用例的双向集合报错）。
+  [ -z "$cerr" ] && [ "$got" = "CAUGHT" ] && printf '       理由: %s\n' "$(printf '%s' "$out" | grep -m1 '✗' | cut -c1-80)"
 }
 
 echo "组件目录校验 覆盖夹具"
