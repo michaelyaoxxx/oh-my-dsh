@@ -178,7 +178,24 @@ function checkFieldClassValues() {
   }
 }
 
-function validate(catalog) {
+// ── catalog 阶段的校验：**只看组件目录即可判定** ─────────────────────────────
+// 不读**子仓**（那要等 `make setup`）——故本函数在 fresh clone 上就能跑，
+// CI 的第一步就是它。判据的单一事实源见 config/README.md 的「校验：两个阶段」。
+//
+// 抽成独立函数，是为了让**查询**入口也能复用它：`--list` / `--plan` 此前
+// 直接查询、绕过 validate()，于是一个字段非法的目录照样能被消费，调用方据此
+// 执行——正是 fail-open。两个入口都必须在查询之前跑它。
+//
+// ⚠️ 复用它的人**必须检查返回值/退出码**：校验失败时 stdout 是**空的**（✗ 走 stderr），
+// 只看输出的消费方会把「拒绝工作」读成「没有需要处理的组件」——那是把 fail-open
+// 搬了个地方。`setup.sh` 是先跑一次无参校验再 `--list`，那个顺序是对的。
+//
+// 成功时**不打印任何东西**：`--list` / `--plan` 的输出是**机器接口**
+// （消费方 `IFS=$'\t' read` / 逐行取路径），stdout 多一行摘要就会被当成
+// 组件路径读进去。失败仍走 fail()（→ stderr）。成功摘要留在 validate() 里。
+//
+// 返回 boolean，供调用方决定是否继续（fail closed）。
+function validateCatalog(catalog) {
   const { components } = catalog
   const seen = new Set()
 
@@ -214,7 +231,34 @@ function validate(catalog) {
         if (!allowed.includes(one)) fail(`${where} 的 ${field} 取值非法: ${JSON.stringify(one)}（允许：${allowed.join(' / ')}）`)
       }
     }
+    // ── catalog 阶段不变量（只看目录即可判定）────────────────────────────────
+    // pinRef 非空：空 ref 会让 check-pins.sh 拿一个空串去 fetch。
+    if (!c.pinRef || String(c.pinRef).trim() === '') fail(`${where} 的 pinRef 为空`)
     if (c.pinPolicy === 'tag' && c.pinRef.startsWith('refs/')) fail(`${where} tag pin 的 pinRef 不应带 refs/ 前缀`)
+    // excluded ⇒ releaseScope 不含 bundle。**不**要求 releaseScope 为空：
+    // excluded 组件未来仍可能有独立制品/SBOM/provenance，过强的约束会挡住合理设计。
+    if (c.runtimeScope === 'excluded' && Array.isArray(c.releaseScope) && c.releaseScope.includes('bundle')) {
+      fail(`${where} 的 runtimeScope=excluded，但 releaseScope 含 bundle —— 不进运行时却进制品，自相矛盾`)
+    }
+    // runtimeScope 与 prepareMode 的正交约束（真值表见 config/README.md）
+    if (c.runtimeScope === 'excluded' && c.prepareMode !== 'none') {
+      fail(`${where} 的 runtimeScope=excluded，但 prepareMode=${c.prepareMode} —— 不属于运行时却要准备`)
+    }
+    if (c.runtimeScope === 'required' && c.prepareMode === 'none') {
+      fail(`${where} 的 runtimeScope=required，但 prepareMode=none —— 属于运行时却不准备`)
+    }
+    // ── 类型不变量：这三个字段必须是**数组** ────────────────────────────────
+    // 写成标量（如 `ciScope: "metadata"`）能骗过"字段存在"检查，却会让
+    // `--list ci:data` 这类选择子按**子串**误命中（`"metadata".includes("data")` 为真），
+    // 返回本不该返回的组件。数组形态下匹配是精确的——**根因是标量，不是选择子**。
+    // （T3 评审实测：标量 + `--list ci:data` → rc=0 返回了组件；已核实数组形态 `ci:meta` 返回空。）
+    for (const f of ['ciScope', 'releaseScope', 'platforms']) {
+      if (!Array.isArray(c[f])) {
+        fail(`${where} 的 ${f} 必须是数组（收到 ${JSON.stringify(c[f])}）`)
+      } else if (c[f].some((x) => typeof x !== 'string')) {
+        fail(`${where} 的 ${f} 元素必须都是字符串`)
+      }
+    }
     if (seen.has(c.path)) fail(`组件路径重复: ${c.path}`)
     seen.add(c.path)
   }
@@ -229,6 +273,20 @@ function validate(catalog) {
   for (const p of inCatalog) {
     if (!inGitmodules.has(p)) fail(`组件目录有 ${p}，但 .gitmodules 未收录（组件已被移除？请同步删除该条）`)
   }
+
+  return !process.exitCode
+}
+
+// validate() = catalog 阶段（上面那个）+ materialized 阶段（需读子仓的部分）。
+//
+// 为什么**不**把 checkLicenseDeclarations 也放进 validateCatalog：它读的是
+// `join(ROOT, c.path, 'package.json')`——**子仓里**的文件，未初始化时读不到。
+// 判据是「会不会读子仓」，不是「要不要联网」；`.gitmodules` 是**主仓**的文件，
+// 故双向集合校验属于 catalog 阶段（config/README.md 的「两个阶段」表同此分法）。
+function validate(catalog) {
+  const { components } = catalog
+
+  validateCatalog(catalog)
 
   const lic = checkLicenseDeclarations(components)
 

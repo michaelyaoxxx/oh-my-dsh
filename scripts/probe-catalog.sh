@@ -206,6 +206,38 @@ write_gitmodules "plugins/ok"
 run_case "B5b 变异已还原（基线，应通过）"    GAP
 
 echo
+echo "== C. catalog 阶段不变量 =="
+write_catalog "[$(good_component c1 plugins/c1 '{"pinRef":"refs/tags/v1"}')]" 2
+write_gitmodules "plugins/c1"
+run_case "C1 tag pin 的 pinRef 带 refs/ 前缀"     CAUGHT
+write_catalog "[$(good_component c1 plugins/c1 '{"pinRef":""}')]" 2
+write_gitmodules "plugins/c1"
+run_case "C2 tag pin 的 pinRef 为空"              CAUGHT
+# ⚠️ C3/C4/C5 的 overrides **必须同时收住旁边那个字段**，否则用例名与实测理由对不上：
+#    good_component 的 base 是 `prepareMode: "source-build"` + `releaseScope: ["bundle"]`，
+#    只改 runtimeScope 会让**两条**不变量同时命中，而 run_case 只打印**第一条** ✗。
+#    实测（未收口时的原方案）：C4 期望 GAP 实测 CAUGHT，理由却是 prepareMode 那条；
+#    C3/C5 虽 CAUGHT，但「删掉本条规则用例仍红」——那样的用例**挡不住规则被删**，
+#    属"因无关原因变红"，断言不可信（T1 评审抓过同一形态）。
+write_catalog "[$(good_component c1 plugins/c1 '{"runtimeScope":"excluded","prepareMode":"none"}')]" 2
+write_gitmodules "plugins/c1"
+run_case "C3 excluded 但 releaseScope 含 bundle"  CAUGHT
+write_catalog "[$(good_component c1 plugins/c1 '{"runtimeScope":"excluded","releaseScope":["sbom"],"prepareMode":"none"}')]" 2
+write_gitmodules "plugins/c1"
+run_case "C4 excluded + 仅 sbom（应允许）"        GAP
+write_catalog "[$(good_component c1 plugins/c1 '{"runtimeScope":"excluded","prepareMode":"source-build","releaseScope":[]}')]" 2
+write_gitmodules "plugins/c1"
+run_case "C5 excluded 但 prepareMode != none"     CAUGHT
+write_catalog "[$(good_component c1 plugins/c1 '{"runtimeScope":"required","prepareMode":"none"}')]" 2
+write_gitmodules "plugins/c1"
+run_case "C6 required 但 prepareMode = none"      CAUGHT
+# C7：标量值的数组字段。它**不是**"选择子写错了"——`--list` 对数组是精确匹配的，
+# 根因是标量能通过 validate。收口在 validate 里（比在选择子解析处更靠前、更根本）。
+write_catalog "[$(good_component c1 plugins/c1 '{"ciScope":"metadata"}')]" 2
+write_gitmodules "plugins/c1"
+run_case "C7 ciScope 写成标量（须拒）"            CAUGHT
+
+echo
 if [ "$STRICT" = 1 ] && [ "$FAILED" -ne 0 ]; then
   echo "✗ --strict：${FAILED} 项与预期不符。"
   exit 1
