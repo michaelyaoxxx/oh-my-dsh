@@ -27,10 +27,22 @@ export DSH_HOME="${DSH_HOME:-$ROOT/.dsh}"
 # 例：dsh-tui 是终端前端，与 dsh-web-app 同级（覆盖 30 个 base 行），两个前端会抢同一批
 # 行；它同样声明了 dsh.bundle.patch，不排除就会被候选收集捞进来挂到 profile dsh。
 # 注意：这里用 --list runtime:excluded 直接给路径，故无需再拼 plugins/ 前缀。
+# 不吞错：目录查询失败必须让脚本失败。此前用 `2>/dev/null || true`，解析失败会
+# 退化为**空排除列表**——而"空列表"的含义是"没有任何组件被排除"，与失败正好相反。
+# 这正是本脚本最需要目录保护的地方：dsh-tui 是唯一 runtimeScope=excluded 的组件，
+# 排除集一空，它就会被下面的候选收集捞进来挂到 profile dsh、把 web 环境弄坏
+# （同 deploy/remote-install.sh:39-42 的警告）。ADR-0005：高风险消费者不得 fail open。
+# ⚠️ 必须用 $() 显式捕获并判 rc：`done < <(cmd)` **拿不到** cmd 的退出码
+#    （进程替换的状态被丢弃），只删掉 `|| true` 只会让错误从"静默"变成"stderr 有字"，
+#    脚本照样带着空排除集往下跑——实测过，别改回去。
+if ! _excluded="$(node "$ROOT/scripts/check-components.mjs" --list runtime:excluded)"; then
+  echo "错误: 组件目录查询失败（原因见上）。link-plugins 拒绝在未知的排除集上继续。" >&2
+  exit 1
+fi
 SKIP_MOUNT=()
 while IFS= read -r _p; do
   [ -n "$_p" ] && SKIP_MOUNT+=("$_p")
-done < <(node "$ROOT/scripts/check-components.mjs" --list runtime:excluded 2>/dev/null || true)
+done <<< "$_excluded"
 
 # dsh plugin 在 profile 目录里 spawn `pnpm`，corepack 从该目录向上找
 # packageManager。本仓根没有 package.json，corepack 会回落 latest（pnpm 12.x 的

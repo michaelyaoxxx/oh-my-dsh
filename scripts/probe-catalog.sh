@@ -548,6 +548,81 @@ write_gitmodules "plugins/e8meta"
 assert_warn_case "E8 只跟踪元数据（package.json/cordis.patch.yml）⇒ 不得警告" ABSENT e8meta
 
 echo
+echo "== F. 消费者的 fail-open（目录查询失败必须 fail closed）=="
+# 这一组测的是**消费方**：`--list` 已经在 D6 里证明"非法目录 ⇒ 非零退出"，
+# 但消费方若把这个非零退出吞掉，D6 就白搭了——fail closed 是**两段**都要成立的事，
+# 缺任何一段，"配置错了还照跑"就还在。
+#
+# 造一个 catalog 非法、但子仓齐备的最小仓库：与主 fixture（$TMP）分开，因为要测的是
+# **消费者在另一个根目录下**的行为，而消费者的根由它自己的位置决定（$ROOT）。
+make_subrepo_broken() { # 造一个 catalog 非法、但子仓齐备的最小仓库
+  mkdir -p "$TMP/broken/scripts" "$TMP/broken/config" "$TMP/broken/plugins/bad"
+  cp "$ROOT/scripts/check-components.mjs" "$TMP/broken/scripts/"
+  # runtimeScope=excluded 但 releaseScope 含 bundle —— catalog 阶段不变量即失败
+  cat > "$TMP/broken/config/components.json" <<'JSON'
+{ "version": 2, "description": "broken fixture",
+  "components": [ { "name": "bad", "path": "plugins/bad", "sourceAuthority": "github",
+    "pinPolicy": "tag", "pinRef": "v1", "ciScope": ["build"],
+    "releaseScope": ["bundle"], "runtimeScope": "excluded", "prepareMode": "none",
+    "platforms": [], "testProfile": "none", "stateSchema": "none", "license": "MIT" } ] }
+JSON
+  printf '[submodule "plugins/bad"]\n\tpath = plugins/bad\n\turl = https://example.invalid/bad.git\n' > "$TMP/broken/.gitmodules"
+  printf '{"name":"bad","license":"MIT"}' > "$TMP/broken/plugins/bad/package.json"
+}
+make_subrepo_broken
+
+# F1 是 F2 的**前提**，不是 F2 的重复：消费者能 fail closed 的唯一依据，是它们
+# `$()` 捕获到的那条非零退出**真的存在**。若 `--list` 改成"打印错误但 rc=0、stdout 空"，
+# 消费者再怎么写都会拿到空集——那时该修的是查询器，而 F2 会**照样绿**（它只看源码文本）。
+# 判据取 rc + ✗ 的**条数**（不取文案，同 run_case：文案重构不该让用例假红），
+# 并确认恰好 1 条 ✗ —— 非零退出必须是**那条不变量**判的，不是崩了。
+f1_out="$(cd "$TMP/broken" && node scripts/check-components.mjs --list runtime:excluded 2>&1)"; f1_rc=$?
+f1_n="$(printf '%s' "$f1_out" | grep -c '✗')"
+if [ "$f1_rc" -eq 0 ]; then
+  printf '  %-44s %s\n' "F1 非法目录下 --list 必须失败" "!! 竟然成功（fail-open）"; FAILED=$((FAILED + 1))
+elif [ "$f1_n" -ne 1 ]; then
+  printf '  %-44s %s\n' "F1 非法目录下 --list 必须失败" "!! 非零退出但非唯一归因（✗×${f1_n}）"; FAILED=$((FAILED + 1))
+else
+  printf '  %-44s %s\n' "F1 非法目录下 --list 必须失败" "ok"
+  printf '       理由(✗×%s): %s\n' "$f1_n" "$(printf '%s' "$f1_out" | grep -m1 '✗' | cut -c1-80)"
+fi
+
+# 断言：两个消费者不再吞掉目录查询的失败。
+# ⚠️ **这是静态检查，不是行为证明**——它挡不住 `2>/dev/null || :` 这类改写。
+#    原本想做成行为断言（拿非法目录跑一次消费者、断言非零退出），**但那是假绿**：
+#    link-plugins.sh 在 `$ROOT/harness/node_modules` 缺失时本来就会失败，
+#    夹具里必然缺这个目录 → 无论 fail-open 修没修，它都"非零退出"。
+#    真正的行为保证在真环境的 `make link-plugins`（真目录、已构建）。
+#
+# ⚠️ 判据**收窄到目录查询那一行**，不是文件级的裸串匹配。简报原形态是
+#    `grep -q '2>/dev/null || true' "$ROOT/$f"`，实测**恒红**：两个文件里各有别处
+#    也含这个串、却与目录查询无关，且都在本任务范围之外——
+#      link-plugins.sh:51 / remote-install.sh:251  `ANCHORED="$(… || true)"`（pnpm 锚点读取）
+#      remote-install.sh:79   `pnpm --version 2>/dev/null || true`（pnpm 解析探测）
+#      remote-install.sh:278  `command -v pnpm 2>/dev/null || true`（shim 定位）
+#    它们的失败方向也**相反**：读不到锚点 ⇒ 重写锚点，是安全方向，不是放行。
+#    恒红的用例不再区分"修好了"与"没修"，等于没有装置——正是它要防的形态。
+#    收窄后对**本 bug** 的覆盖**没有**降低：判的是「--list 调用行上有没有吞错」，
+#    连 `2>/dev/null || :`、`2>/dev/null; true` 这类改写也照样命中。
+#    第二个分支防**用例过时**：调用被删/改写成别的查询方式时，"没有吞错"就不是结论了。
+for f in scripts/link-plugins.sh deploy/remote-install.sh; do
+  # 只认**调用行**：文件里的注释也提到过 `--list runtime:excluded`，但它不含脚本名，
+  # 故用 `check-components.mjs … --list runtime:excluded` 作判据，注释不会误命中。
+  f2_call="$(grep -E 'check-components\.mjs.*--list runtime:excluded' "$ROOT/$f" 2>/dev/null)"
+  f2_bad=""
+  if [ -z "$f2_call" ]; then
+    f2_bad="文件里找不到该目录查询调用（用例过时，须复核）"
+  elif printf '%s\n' "$f2_call" | grep -q '2>/dev/null'; then
+    f2_bad="目录查询行仍吞错：$(printf '%s' "$f2_call" | tr -s ' ' | cut -c1-60)"
+  fi
+  if [ -n "$f2_bad" ]; then
+    printf '  %-44s %s\n' "F2 $f 目录查询不得吞错（静态检查）" "!! $f2_bad"; FAILED=$((FAILED + 1))
+  else
+    printf '  %-44s %s\n' "F2 $f 目录查询不得吞错（静态检查）" "ok"
+  fi
+done
+
+echo
 if [ "$STRICT" = 1 ] && [ "$FAILED" -ne 0 ]; then
   echo "✗ --strict：${FAILED} 项与预期不符。"
   exit 1

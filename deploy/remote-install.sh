@@ -39,10 +39,21 @@ PROFILE=dsh
 # 覆盖 30 个 base 行），它同样声明了 dsh.bundle.patch，不排除会被下面的候选收集捞进来
 # 挂到 profile dsh、把 web 环境弄坏。它跑在独立 profile，见 scripts/link-tui.sh。
 # 与 scripts/link-plugins.sh 同源：由组件目录派生（runtimeScope=excluded）。
+# 不吞错：目录查询失败必须让部署失败。此前用 `2>/dev/null || true`，解析失败会退化为
+# **空排除列表**——而"空列表"的含义是"没有任何组件被排除"，与失败正好相反：dsh-tui
+# 会被下面的候选收集捞进来挂到 profile dsh，正是上面警告的那件"把 web 环境弄坏"的事。
+# ADR-0005：配置错误必须 fail closed，部署路径尤其（它跑在无人值守的服务器上）。
+# ⚠️ 必须用 $() 显式捕获并判 rc：`done < <(cmd)` **拿不到** cmd 的退出码
+#    （进程替换的状态被丢弃），只删掉 `|| true` 只会让错误从"静默"变成"stderr 有字"，
+#    脚本照样带着空排除集往下跑——实测过（见 scripts/link-plugins.sh 同处说明）。
+if ! _excluded="$(node "$ROOT/scripts/check-components.mjs" --list runtime:excluded)"; then
+  echo "错误: 组件目录查询失败（原因见上）。remote-install 拒绝在未知的排除集上继续。" >&2
+  exit 1
+fi
 SKIP_MOUNT=()
 while IFS= read -r _p; do
   [ -n "$_p" ] && SKIP_MOUNT+=("$_p")
-done < <(node "$ROOT/scripts/check-components.mjs" --list runtime:excluded 2>/dev/null || true)
+done <<< "$_excluded"
 cd "$ROOT"
 [ -f harness/package.json ] || { echo "错误: 未找到 harness/package.json（rsync 内容不完整？）。" >&2; exit 1; }
 
