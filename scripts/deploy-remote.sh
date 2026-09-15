@@ -144,12 +144,41 @@ remote_sudo() { # $1=target；$2=服务器命令（单字符串）
   ssh "${SSH_OPTS[@]}" -t "$t" "sudo bash -c $(shell_quote "$cmd")"
 }
 
-# rsync 参数单一来源：dry-run 打印与真实执行不漂移；-e 复用 SSH_OPTS 防挂起。
+# ── 由 git **动态派生** ignored 路径清单，喂给 rsync ─────────────────────────
+# 为什么不能靠手写黑名单：rsync 同步的是**工作树**，而「工作树 clean」的判据
+# （`git status` 不带 `--ignored`）**看不见 ignored 文件**。本仓实测后果：
+#   harness/native/system/packages/darwin-arm64/bin/system.node（Mach-O arm64）
+#   与 harness/.dsh-build/ 都会被同步到 Linux —— 直接违反本仓硬约束
+#   「原生依赖必须按平台各自构建，严禁跨平台拷贝」。
+# 黑名单按定义就不完整（新增工具 = 新增遗漏），故改由 **git 自己列出** ignored 路径。
 #
-# ⚠️ **排除清单是 containment，不是发布内容策略。** `.gitignore` 只约束 Git，对 rsync 无效——
-# 凡是没有在这里排除的东西都会进服务器。维护黑名单迟早会漏（新工具、新临时目录）。
-# 根治办法是 manifest/allowlist 驱动的制品打包（见 docs/cicd/03-artifact-and-release.md），
-# 在那之前：**新增任何会落地的本地目录时，必须同时加进这里。**
+# 用**默认模式**（不加 -uall）：它给目录级条目（harness 573 条）；
+# 而 -uall 会把 ignored 目录里每个文件都展开（harness 80622 条），对 rsync 不实用。
+# 输出形如 `harness/.dsh-build/`、`harness/native/system/packages/darwin-arm64/bin/`。
+#
+# ⚠️ 这仍是 **containment，不是发布内容策略**。根治是 tracked allowlist 驱动的制品
+# 打包（见 docs/cicd/03-artifact-and-release.md）；在那之前本派生清单保证
+# 「ignored 的东西不会无声明进 payload」。
+build_ignored_excludes() {
+  # `[`、`*`、`?` 在 git 路径里是普通字符，但会被 rsync 当**通配符**——转义掉，
+  # 否则一个含 `[` 的目录名会意外排除掉一批无关文件。
+  # 前缀 `/` 把模式锚定到传输根，避免 `lib` 这类模式匹配到任意层级的同名目录。
+  local esc='s/[][*?]/\\&/g'
+  git -C "$ROOT" status --ignored --porcelain 2>/dev/null \
+    | sed -n 's|^!! ||p' | sed "$esc" | sed 's|^|/|'
+  # 各 submodule（递归），路径前缀成相对主仓根
+  # $displaypath 由 git submodule foreach 注入并展开，不是 bash 变量（故保持单引号）。
+  # shellcheck disable=SC2016
+  git -C "$ROOT" submodule foreach --recursive --quiet \
+    'git status --ignored --porcelain 2>/dev/null | sed -n "s|^!! ||p" | sed "s|[][*?]|\\\\&|g" | sed "s|^|/$displaypath/|"' 2>/dev/null
+}
+
+IGNORED_EXCLUDES="$(mktemp)"
+trap 'rm -f "$IGNORED_EXCLUDES"' EXIT
+build_ignored_excludes > "$IGNORED_EXCLUDES"
+echo "==> 已由 git 派生 $(wc -l < "$IGNORED_EXCLUDES" | tr -d ' ') 条 ignored 路径排除项（含递归 submodule）"
+
+# rsync 参数单一来源：dry-run 打印与真实执行不漂移；-e 复用 SSH_OPTS 防挂起。
 RSYNC_ARGS=(
   -az --delete --rsync-path='sudo rsync'
   --exclude '.git' --exclude '.dsh/' --exclude 'node_modules/'
@@ -160,6 +189,8 @@ RSYNC_ARGS=(
   --exclude '.env' --exclude '.env.*' --exclude '.claude/' --exclude '.netrc'
   # 散落的日志与编辑器/系统垃圾
   --exclude '*.log' --exclude '*.swp' --exclude '*~'
+  # git 派生的 ignored 清单（见上）——这是「ignored 不进 payload」的保证
+  --exclude-from "$IGNORED_EXCLUDES"
   -e "ssh ${SSH_OPTS[*]}"
 )
 
