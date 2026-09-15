@@ -146,6 +146,22 @@
       "notes": "其 cordis.patch.yml 会整表替换 base 的 web 行 config，须靠 patches/restore-web-fetch-provider.yml 补齐旁键。"
     },
     {
+      "name": "loongsuite-observability",
+      "path": "plugins/loongsuite-observability",
+      "sourceAuthority": "github",
+      "pinPolicy": "tag",
+      "pinRef": "v0.1.2",
+      "ciScope": ["build", "test", "package"],
+      "releaseScope": ["bundle", "sbom"],
+      "runtimeScope": "required",
+      "platforms": ["linux-x86_64", "macos-arm64"],
+      "prepareMode": "source-build",
+      "testProfile": "vitest",
+      "stateSchema": "none",
+      "license": "Apache-2.0",
+      "notes": "LoongSuite OpenTelemetry GenAI 可观测性：把 session/agent/LLM/tool 生命周期转成 OTLP/HTTP protobuf 外发（`captureContent` 默认 false，即默认不外发提示词与结果）。入口自声明 `inject: ['sessions','llm']` → 无需 patch。`dist/` 未被 git 跟踪（必须构建）；`prepack: pnpm run build` 会被 --ignore-scripts 挡下；声明 packageManager pnpm@10.28.2 → 走 setup.sh 的 pnpm 分支。上游 README 只在 DSH 0.1.0-rc.6 上全量验证过，本仓 pin 的 harness 是 0.1.5-rc.2。"
+    },
+    {
       "name": "dsh-tui",
       "path": "plugins/dsh-tui",
       "sourceAuthority": "github",

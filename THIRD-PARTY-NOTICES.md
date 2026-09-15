@@ -29,13 +29,14 @@
 | `dsh-agent-teams` | MIT | [`github`](https://github.com/NanmiCoder/dsh-agent-teams.git) | bundle, sbom | 包含 |
 | `dsh-at-file` | MIT | [`github`](https://github.com/FSMargoo/dsh-at-file.git) | bundle, sbom | 包含 |
 | `modsearch` | MIT | [`github`](https://github.com/liustack/modsearch.git) | bundle, sbom | 包含 |
+| `loongsuite-observability` | Apache-2.0 | [`github`](https://github.com/loongsuite/dsh-plugin.git) | bundle, sbom | 包含 |
 | `dsh-tui` | MIT | [`github`](https://github.com/ccch1mneyyy/dsh-TUI.git) | — | **排除** |
 
 ## 按许可证聚合
 
 ### Apache-2.0 — Apache License 2.0
 
-1 个组件：`dsh-web`
+2 个组件：`dsh-web`、`loongsuite-observability`
 
 ### MIT — MIT License
 
