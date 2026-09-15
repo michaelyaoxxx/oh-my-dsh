@@ -96,20 +96,35 @@ run_case() { # $1=场景名  $2=期望(CAUGHT/GAP)
   # 刻意不接"构造函数名"参数——兄弟脚本 probe-license-gate.sh 的 $6 是真被调用的，
   # 若这里也写一个同名参数却不用，后续任务照注释传函数名会**静默不执行构造**，
   # 造出与被测场景不符的 fixture，用例可能假过。
-  local name="$1" expect="$2" out rc got mark="ok" cerr=""
+  local name="$1" expect="$2" out rc got mark="ok" cerr="" nviol=0
   # 构造失败即失败：fixture 已经建好了才轮到本函数，故先收错误再判定。
   # 不收的话，坏 override 会让用例**假过**（绿的，理由却是"双向集合不符"）——
   # 断言只到"退出码非 0"的粒度挡不住这个，本任务实测踩过。
   if [ -s "$CONSTRUCT_ERR" ]; then cerr="$(cat "$CONSTRUCT_ERR")"; : > "$CONSTRUCT_ERR"; fi
   out="$(cd "$TMP" && node scripts/check-components.mjs 2>&1)"; rc=$?
   got="GAP"; [ "$rc" -ne 0 ] && got="CAUGHT"
+  [ "$got" = "CAUGHT" ] && nviol="$(printf '%s' "$out" | grep -c '✗')"
   if [ "$got" != "$expect" ]; then mark="!! 与预期不符"; FAILED=$((FAILED + 1)); fi
   if [ -n "$cerr" ]; then mark="!! 构造失败——本用例结果不可信"; FAILED=$((FAILED + 1)); fi
+  # ── 唯一归因：CAUGHT 的用例必须**恰好命中一条规则**（✗ 恰好 1 条）───────────
+  # 为什么需要它：断言只到"退出码非 0"的粒度，于是"被旁边那条规则顺带判红"的用例
+  # 是**绿的**——删掉它名字里那条规则它照样红，等于那条规则没有防退化装置。
+  # 判据取 ✗ 的**条数**，不取文案（F3：文案重构不该让用例假红）。
+  # 本任务实测踩过：C3 原方案如此（只改 runtimeScope，两条不变量同时命中）。
+  # 0 条单列一档：那说明"判红"根本不是规则命中的（崩了？），诊断要指向这里。
+  if [ "$got" = "CAUGHT" ] && [ -z "$cerr" ]; then
+    if [ "$nviol" -eq 0 ]; then
+      mark="!! 判红却没有 ✗——不是规则命中的（崩了？）"; FAILED=$((FAILED + 1))
+    elif [ "$nviol" -ne 1 ]; then
+      mark="!! 非唯一归因（命中 $nviol 条规则）"; FAILED=$((FAILED + 1))
+    fi
+  fi
   printf '  %-44s 期望=%-6s 实测=%-6s %s\n' "$name" "$expect" "$got" "$mark"
   [ -n "$cerr" ] && printf '       构造错误: %s\n' "$cerr"
   # 构造失败时**不打印"理由"**：那时校验器跑的是上一用例残留的 catalog，它的拒因
   # 与本用例无关，打出来会把读者引到错误的规则上（实测：会显示上一个用例的双向集合报错）。
-  [ -z "$cerr" ] && [ "$got" = "CAUGHT" ] && printf '       理由: %s\n' "$(printf '%s' "$out" | grep -m1 '✗' | cut -c1-80)"
+  # 理由后面带上 ✗ 条数：唯一归因是判据，把它的实测值一并印出来，读者不必另跑一遍脚本。
+  [ -z "$cerr" ] && [ "$got" = "CAUGHT" ] && printf '       理由(✗×%s): %s\n' "$nviol" "$(printf '%s' "$out" | grep -m1 '✗' | cut -c1-80)"
 }
 
 echo "组件目录校验 覆盖夹具"
@@ -199,8 +214,12 @@ run_case "B5 FIELD_CLASS 值拼错（须拒）"    CAUGHT
 cp "$ROOT/scripts/check-components.mjs" "$VALIDATOR" \
   || record_construct_error "B5 还原失败：副本可能仍是变异体，后续用例结果不可信"
 # B5b 是**还原哨兵**：B5 把校验器副本变异过，若还原失败，本用例会立刻变红
-# （干净 catalog 被变异体拒掉）。别删——今天 B5 之后没有别的用例，删了它
-# 从现在到 T4 加用例之间的这段时间里，变异泄漏不会有任何信号。
+# （干净 catalog 被变异体拒掉）。
+# 别删——它的价值**不随任务过期**（原先这里写的是"今天 B5 之后没有别的用例"，
+# C 组加进来后那句话已经错了，但机制本身没变）：泄漏的变异体是"什么都拒"，
+# 于是**所有 CAUGHT 用例都会假过**（它们只断言"退出码非 0"，而变异体就是非零退出），
+# **只有排在变异之后**的 GAP 基线抓得住它。B5b 之后还有 C4 这条 GAP 用例可作第二信号，
+# 但 B5b 紧邻还原那一步：它红了，原因直接指向"还原失败"，不必再去排除别的可能。
 write_catalog "[$(good_component ok plugins/ok)]" 2
 write_gitmodules "plugins/ok"
 run_case "B5b 变异已还原（基线，应通过）"    GAP
@@ -231,11 +250,20 @@ run_case "C5 excluded 但 prepareMode != none"     CAUGHT
 write_catalog "[$(good_component c1 plugins/c1 '{"runtimeScope":"required","prepareMode":"none"}')]" 2
 write_gitmodules "plugins/c1"
 run_case "C6 required 但 prepareMode = none"      CAUGHT
-# C7：标量值的数组字段。它**不是**"选择子写错了"——`--list` 对数组是精确匹配的，
-# 根因是标量能通过 validate。收口在 validate 里（比在选择子解析处更靠前、更根本）。
+# C7–C9：标量值的数组字段（三个字段各一条，各自唯一归因）。
+# 它**不是**"选择子写错了"——`--list` 对数组是精确匹配的，根因是标量能通过 validate。
+# 收口在 validate 里（比在选择子解析处更靠前、更根本）。
+# 标量值刻意取**该字段词表内的合法值**：这样它骗过的是"字段存在 + 取值合法"两道检查，
+# 只被类型不变量抓住——红得干净，不会与 ENUM 那条混淆（否则一条用例两条 ✗）。
 write_catalog "[$(good_component c1 plugins/c1 '{"ciScope":"metadata"}')]" 2
 write_gitmodules "plugins/c1"
 run_case "C7 ciScope 写成标量（须拒）"            CAUGHT
+write_catalog "[$(good_component c1 plugins/c1 '{"releaseScope":"bundle"}')]" 2
+write_gitmodules "plugins/c1"
+run_case "C8 releaseScope 写成标量（须拒）"       CAUGHT
+write_catalog "[$(good_component c1 plugins/c1 '{"platforms":"linux-x86_64"}')]" 2
+write_gitmodules "plugins/c1"
+run_case "C9 platforms 写成标量（须拒）"          CAUGHT
 
 echo
 if [ "$STRICT" = 1 ] && [ "$FAILED" -ne 0 ]; then
