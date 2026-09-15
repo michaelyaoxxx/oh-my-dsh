@@ -23,11 +23,15 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      # 0. 组件目录：双向集合校验 + license 与组件自身声明核对 + 第三方声明是否最新。
-      #    放在最前：不联网、不依赖构建，是整条流水线最便宜的一道门，应当最先失败。
-      - name: Check component catalog
+      # 0. 组件与许可证：全部不联网、不依赖构建，是整条流水线最便宜的门，应当最先失败。
+      #    check-components.mjs  声明层：双向集合校验 + license 词表 + 与组件自身声明核对
+      #    check-licenses.mjs    内容层：读各组件 LICENSE 文件判是不是 copyleft
+      #                          （补上声明层挡不住的「都写 MIT 但 LICENSE 是 GPL」）
+      #    gen-notices.mjs       声明文件是否过期（它是合规文档）
+      - name: Check component catalog and licenses
         run: |
           node scripts/check-components.mjs
+          node scripts/check-licenses.mjs
           node scripts/gen-notices.mjs --check
       # 1. pin 一致性（清单与校验逻辑收敛在 scripts/check-pins.sh，
       #    与 scripts/release.sh、Jenkins 侧共用同一实现；未推送 commit 会失败）
