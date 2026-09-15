@@ -636,7 +636,7 @@ write_gitmodules "plugins/aaa plugins/bbb"
 plan_out="$(cd "$TMP" && node scripts/check-components.mjs --plan prepare 2>&1)"
 printf '  %-44s %s\n' "D1 计划含 required 组件" "$(printf '%s' "$plan_out" | grep -q 'plugins/aaa.*source-build' && echo ok || { echo '!! 缺 aaa'; FAILED=$((FAILED+1)); })"
 printf '  %-44s %s\n' "D2 计划**不含** excluded 组件" "$(printf '%s' "$plan_out" | grep -q 'plugins/bbb' && { echo '!! 混入 bbb'; FAILED=$((FAILED+1)); } || echo ok)"
-printf '  %-44s %s\n' "D3 计划带 prepareMode（不是只有路径）" "$(printf '%s' "$plan_out" | grep -qP 'plugins/aaa\t' && echo ok || { echo '!! 无制表符分隔的动作'; FAILED=$((FAILED+1)); })"
+printf '  %-44s %s\n' "D3 计划带 prepareMode（不是只有路径）" "$(printf '%s' "$plan_out" | awk -F'\t' '$1=="plugins/aaa" && $2!=""{f=1} END{exit !f}' && echo ok || { echo '!! 无制表符分隔的动作'; FAILED=$((FAILED+1)); })"
 ```
 
 - [ ] **Step 2: 跑，确认 D1–D3 失败**
