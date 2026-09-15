@@ -49,6 +49,12 @@ make deploy
 2. **快照**：把当前 `$DEPLOY_DIR` 整体快照到 `$DEPLOY_DIR-snapshot`（全新机器跳过），供失败时自动回滚。**快照排除 `.dsh/`**（状态不参与回滚，见下）。
 3. **同步**：rsync 主仓源码（含 submodule 检出内容）到 `$DEPLOY_DIR`，经 sudo rsync 写入。排除清单见脚本 `RSYNC_ARGS`——**它不只是 `.git` / `.dsh` / `node_modules`**：还包括 `log/`（本地开发日志，含隧道 URL、错误栈、绝对路径）、`.env*`、`.claude/`、`.netrc`、`*.log`。⚠️ `.gitignore` 只约束 Git，**对 rsync 无效**；新增任何会落地的本地目录时必须同步加进那里。
 4. **服务器侧安装**（`deploy/remote-install.sh`）：工具链校验（node / corepack / pnpm 解析）→ harness `pnpm install --frozen-lockfile` + build（原生依赖按服务器平台构建，严禁跨平台拷贝 node_modules）→ 各插件 `--frozen-lockfile` + build → 插件经 `dsh plugin --profile dsh add link:` 装入 `$DEPLOY_DIR/.dsh/profiles/dsh/` → 按 `$DEPLOY_DIR` 渲染 `dsh.service` 模板（`@DEPLOY_DIR@` 占位符）并安装到 `/etc/systemd/system/dsh.service`。
+   - **插件参数**：服务器侧的 `make link-plugins` 等价步骤会跑 `scripts/save-settings.mjs seed`，
+     按 [`config/plugin-configs/catalog.json`](../config/plugin-configs/catalog.json) 把缺失的
+     插件配置从基线铺进运行时（DSH settings.yaml + 独立仓如 modsearch 的 `~/.modsearch/config.json`；
+     `~` 是 remote-install 运行环境的 home，当前 sudo root 与 dsh.service 一致）——部署即带齐与
+     仓库一致的插件参数；已存在的 live 文件**绝不覆盖**（服务器上人工/UI 改的内容永远优先）。
+     改参数请走 git（本地 `make save-settings` 后提交），回滚不涉及这些状态。
 5. **服务接管**：`systemctl daemon-reload` → `enable --now` → `restart`（unit 已由上一步渲染安装）。
 6. **健康检查**：在**服务器本机**轮询 `curl http://127.0.0.1:3080`（至多 60 秒），HTTP 状态码 `200/303/401` 均视为就绪——harness 对未认证请求返回 `401`（浏览器 token flow 是唯一认证路径，`401` = 认证 gate 在响应 = 服务已就绪）。DSH Web 只绑定 `127.0.0.1`（harness 有意限制，不监听外网），从外部访问请用 SSH 端口转发或反向代理。
 

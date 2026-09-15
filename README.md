@@ -44,6 +44,7 @@ make dev       # 启动 DSH Web（$DSH_HOME=./.dsh，插件 link 挂载，改插
 | `plugins/` | 插件 submodule 集合，插件默认安装位置。**各插件的 pin / 许可证 / 是否进制品与运行时，一律以 [config/components.json](config/components.json) 为准**（`node scripts/check-components.mjs` 会与 `.gitmodules` 做双向校验） |
 | `.dsh/` | DSH 运行主目录（`$DSH_HOME`，运行时生成，gitignore） |
 | `scripts/` | 编排脚本（Makefile 是薄入口） |
+| `config/` | 组件清单（[components.json](config/components.json)）；插件参数基线（[plugin-configs/](config/plugin-configs/catalog.json)，seed/save 统一入口 `scripts/save-settings.mjs`，见 [docs/plugin-dev.md](docs/plugin-dev.md)） |
 | `deploy/` | systemd unit + 服务器安装脚本 + hosts 模板 |
 | `docs/` | 部署手册、插件开发指南、远程访问、CI/CD 规范与 ADR；`superpowers/specs/` 是**历史、非权威**的早期设计稿 |
 | `.github/workflows/` | verify（pin 校验 + 冒烟）/ release（tag → GitHub Release） |

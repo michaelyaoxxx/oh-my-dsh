@@ -11,6 +11,54 @@
 - dsh-web 根包的 patch 指向包外的子包文件，因此根包不是挂载入口，其聚合包才是（与 dsh-web 官方开发文档一致）。
 - 被其他可挂载包依赖的包（聚合包的家族成员）不单独挂载，由聚合包的 `link:` 带出本地构建。
 
+## 插件参数持久化（UI 里保存的设置会不会丢）
+
+插件参数有两个存储阵营，持久化方案分开建模，但都由**同一个入口**调度：
+
+1. **走 DSH settings 的插件**：Web UI 里配置的参数经 `ctx.settings` →
+   `@deepseek-ai/dsh-settings-file` 落盘在 **`$DSH_HOME/settings.yaml`**（= `.dsh/settings.yaml`，
+   gitignore 的一次性运行时目录）。它**跨 `make dev` 重启保留**——`link-plugins.sh` /
+   `dsh plugin add` 只写 profile 的 `package.json` / `cordis.patch.yml` / `node_modules` 链接，
+   不碰 settings.yaml。多数 deepseek 官方与第三方插件走这一阵营，共用同一个 settings.yaml。
+2. **有独立配置仓的插件**（如 `modsearch`）：不用 settings.yaml，配置在它自己的文件里
+   （modsearch → **`~/.modsearch/config.json`**，`plugins/modsearch/dsh/index.js` 注释
+   「the one file every harness shares」；DSH 设置卡片与 CLI 读写同一文件，合并式打补丁 +
+   0600 原子写，不碰无关键）。
+
+**统一入口**：一切插件参数基线登记在 [`config/plugin-configs/catalog.json`](../config/plugin-configs/catalog.json)
+（单一事实源），由 **`scripts/save-settings.mjs`**（一个脚本）按 `seed` / `save` / `list`
+子命令统一处理；`link-plugins.sh` 与 `deploy/remote-install.sh` 共用同一次 `seed` 调用
+（杜绝两处漂移）：
+
+- `node scripts/save-settings.mjs seed`：对每个登记插件，**live 缺失才从基线铺、绝不覆盖**
+  已存在的 live 文件（用户之后在 UI/CLI/文件里改的内容永远优先）；`make dev` 每次都跑。
+- `node scripts/save-settings.mjs save` = **`make save-settings`**：把 live 导出回基线入版本库
+  （幂等；yaml 基线只重写 marker 内容区、保留头部说明，json 整文件替换），走正常 review。
+- `make seed-configs`：手动补铺一次（等价 link-plugins 里的那次 seed）。
+
+**每插件一文件 vs 合并一文件**（设计取舍）：**按「配置引擎」分，不按插件数一刀切**——
+DSH settings 本身是「一个文档多个命名空间」的合并模型，所以走 `ctx.settings` 的插件
+（deepseek 官方 + 第三方）合并进 `config/plugin-configs/dsh-settings.yaml` 这一个文件（总览
+天然成立、seed/save 同一结构）；有独立配置仓的插件各一个基线文件（如
+`config/plugin-configs/modsearch.json`），因为它们的 live 格式（json）、live 路径（`$HOME`）、
+secret 语义（0600、环境变量注入）都不同，强行合并会失真。新增插件 = 在
+`config/plugin-configs/` 放一个基线文件 + `catalog.json` 加一行，脚本不用改。
+
+**两条真正会丢的路径**（上面方案治的是 ①；② 是上游设计）：
+1. **`.dsh/` 与 `~/.modsearch/` 都是 gitignore/一次性**：fresh clone / 清空 / 换机器 / 部署
+   会得到空运行时 → seed 从基线恢复；UI 改好 → `make save-settings` 固化回基线。
+2. **远程/隧道访问（非 `127.0.0.1`）= 内存态**：harness 的 `ui-settings` 里
+   `persistence = isLoopback ? 'host' : 'memory'`（`harness/packages/client/ui-settings/src/client/index.ts:58`），
+   非回环页面的保存**根本不落盘**，服务一重启就丢——上游设计，本仓层级无法根除（不改
+   submodule）。跨机器的持久化请走基线 + git（本地保存 → `make save-settings` → 部署/新机
+   从基线 seed）。
+
+⚠️ **secret 卫生**：所有基线/live 的秘密值只允许环境变量形态（settings.yaml 用
+`apiKeyEnv: 环境变量名`；modsearch 用运行时 `TAVILY_API_KEY` 等环境变量绑定，基线上干脆不
+携带密钥）。`save-settings.mjs` 的 `save`/`seed` 门禁会拒绝字面 `apiKey`/`token`/`secret`/
+`password` 值。真正的密钥放 `.credentials.yaml`（0600、gitignore）或环境变量，**不进版本库**。
+
+
 ## 在 submodule 内开发（以 dsh-web 为例）
 
 ```sh
