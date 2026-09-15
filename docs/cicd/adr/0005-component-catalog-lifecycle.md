@@ -86,7 +86,19 @@
 
 **一条不写成不变量、只报警告：** `source-build` 且**任何会被加载的入口**已被 git 跟踪 ⇒ 构建**可能**弄脏 submodule（重建结果与提交版本逐字节一致时 Git 不会显示 dirty，如 `dsh-market` 的 `client/client.js`），进而触发部署的快照保真检查。这是**运维后果**，不是 schema 矛盾——本仓可以出于供应链政策选择源码重建，即使子仓恰好也提交了产物。**用警告让它可见，不用规则禁止它。**
 
-⚠️ **判据必须与上面 `tracked-prebuilt` 用同一个集合**（`main` / `types` / 无通配符的 `exports` 目标）——**只查 `main` 会漏报本条自己的例子**：`dsh-market` 的 `main` 是 `lib/index.js`，它恰恰**未**被 git 跟踪；被跟踪的是 `exports["./client"] → ./client/client.js`。按全入口集判定，当前会触发的是 `dsh-market`、`modlens`、`modsearch` 三个 `source-build` 组件。
+⚠️ **只查 `main` 会漏报本条自己的例子**：`dsh-market` 的 `main` 是 `lib/index.js`，它恰恰**未**被 git 跟踪；被跟踪的是 `exports["./client"] → ./client/client.js`。所以**入口的枚举方式**与上面 `tracked-prebuilt` 相同（`main` / `types` / 无通配符的 `exports` 目标）。
+
+⚠️⚠️ **但候选集不能照搬 `tracked-prebuilt` 的全部入口——两条规则问的不是同一件事**：
+
+| 规则 | 它问的问题 | 候选集合 |
+| --- | --- | --- |
+| `tracked-prebuilt` 不变量 | fresh clone 上**组件还能用吗** | **所有**声明入口（`package.json` 也算：缺了它组件直接坏） |
+| 本条警告 | **构建会覆盖哪个已跟踪文件** | **只有构建产物**（代码模块），**排除人手维护的 manifest / 配置** |
+
+`package.json` 与 `cordis.patch.yml` 这类文件被跟踪，但**构建从不写它们**。
+把它们算进来，警告会对**根本不会被弄脏**的组件喊狼来了——
+而**一条喊狼来了的警告会被忽略**，等于没有。
+（实测：照搬全入口集会在 10 个组件里触发 **6 个**；只算构建产物则恰好触发 `dsh-market`、`modlens`、`modsearch` 三个。）
 
 ## 后果
 
