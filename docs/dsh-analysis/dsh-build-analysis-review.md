@@ -131,3 +131,14 @@
 
 > 至此，评审 P0 全部闭合、P1 闭合（V2/V7 已给出源码判定，实测列为可选）、P2 主要项落地。
 > 剩余开放：V2/V7 的隔离实例实测、以及把 `dsh-build-analysis.md` / `dsh-deep-dive` / `dsh-observability-analysis` 三份口径统一（后两份由仓库主按计划另行处理）。
+
+---
+
+## 9. 实测记录（V2/V7，2026-09-16，隔离实例 `--port 0` + 拷贝 `$DSH_HOME`）
+
+| 项 | 实测过程 | 结果 |
+| :--- | :--- | :--- |
+| V7 | `NODE_OPTIONS=--inspect`（默认 9229）启动隔离 dsh；实例 `--port 0`=38307 | **[验] **9229 在监听；默认端口 9229 与 experimental-inspector 默认 9230 不冲突；与真实 3080/2021 亦无冲突 |
+| V2 | `levels.default=3` 启动前后分别设置；boot / HTTP 流量（401）/ 触碰 patch 三窗口 | **[验] **均 0 条 `[D]`；全仓仅 4 处 `logger.debug()` ⇒ 该 profile 无 debug 发射源，热生效不可观测（非证伪） |
+
+**结论**：想观测更细的启动/运行日志，优先 `NODE_DEBUG=http,net,module,esm`、`NODE_OPTIONS=--inspect`、`vite DEBUG`、隧道日志（`VERBOSE`/`TUNNEL_*`）——当前 pin 的 logger levels 开关收益≈0（无 debug 调用源）。

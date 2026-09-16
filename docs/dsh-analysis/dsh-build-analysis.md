@@ -1643,12 +1643,12 @@ make -> bash(recipe: link-plugins + cd harness) -> pnpm dsh
 | # | 事项 | 性质 | 下一步 |
 | :- | :--- | :--- | :--- |
 | V1 | B13 竞态（`ClientModuleRegistry`/webServer）复现率与触发条件 | 启动期 | 反复冷启动统计；`NODE_DEBUG=module,esm` + 顺序探针 |
-| V2 | log live-reload 对 logger `levels` 是否真正热生效 | **[S] 语义链成立**：HMR 配置热生效（profile-boot 注释“cordis.patch.yml edits stay live”）+ logger-console 构造按 config 注册 exporter（`vendor/logger-console/src/shared.ts:54-57`）；未隔离实例实测 | 隔离实例（`--port 0` + 拷贝 `$DSH_HOME`）改 `levels` 后不重启观察 `[D]` 是否出现 |
+| V2 | log live-reload 对 logger `levels` 是否真正热生效 | **[验] 实测不可观测**（2026-09-16，隔离实例 `--port 0`+拷贝 `$DSH_HOME`）：启动前后设 `levels.default=3`，boot / HTTP 流量 / 触碰 patch 三窗口均 **0 条 `[D]`**；全仓仅 4 处 `logger.debug()`（auth 授权撤销 / webworker tunnel / webhook 事后 / `vendor/hmr:245` 属模块热重载路径非本 watch）⇒ 该 profile 无 debug 发射源，热生效无法证真亦非证伪 | 要看更细日志请走 `NODE_DEBUG=http,net,module,esm` / `NODE_OPTIONS=--inspect` / `vite DEBUG` / 隧道日志层面 |
 | V3 | workspace 计数口径（本文实测 278 vs §2 警告区 280） | 计数 | 统一为「packages+apps 内 package.json，不含 vendor/node_modules」口径并回写 |
 | V4 | 9/16 多次 `make dev` 日志（`log/dev-20260916*`）与本文档 9/15 基线的差异 | 运行期漂移 | 逐一对齐告警/新行为；抽 1 份做 host/client 动态分析基线 |
 | V5 | tsdown “Granting execute permission to lib/bin.js” 由哪个阶段完成 | 工具链 | 查 tsdown 的 shebang/CLI 后处理源码 |
 | V6 | Client 面 CJS `client.js` 的实际模块语义（`type`/format/loader） | 打包语义 | 已给判据（§9.4），待 loader 侧确认 |
-| V7 | `NODE_OPTIONS=--inspect` 与 experimental-inspector 并存时的端口 | **[S] 默认不冲突**：Node `--inspect` 默认 9229（Node 官方文档）；experimental-inspector 默认 9230（`packages/experimental/inspector/src/index.ts:76`） | 同端口时才需 `--inspect=<explicit port>` 显式错开 |
+| V7 | `NODE_OPTIONS=--inspect` 与 experimental-inspector 并存时的端口 | **[验] 实测通过**（2026-09-16）：隔离实例 `NODE_OPTIONS=--inspect`（默认 9229）确认在 **9229 监听**，实例 `--port 0`=38307，与真实 3080/2021 无冲突；experimental-inspector 默认 9230（`packages/experimental/inspector/src/index.ts:76`，源码）⇒ **默认端口不冲突** | 同端口时才需 `--inspect=<explicit port>` 显式错开 |
 | V8 | Host refs=226 是否含 vendor；二次构建是否命中增量（8s→1-2s 需复跑） | 增量 | 按 §14.5 三连实验复跑 |
 
 ## 23. 关键证据索引
