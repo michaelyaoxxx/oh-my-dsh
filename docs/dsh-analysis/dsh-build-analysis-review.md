@@ -117,3 +117,17 @@
 | 提交 | `build-analysis.md` 已本地提交 `2c92350`（未 push，由仓库主维护） |
 
 > 状态：P0 全部闭合；P1 除 V2/V7（需实测）外闭合；P2 已部分落地。本评审文档为第一轮归档，后续轮次可追加在文末。
+
+---
+
+## 8. 修订轮 3（评审 §6 建议落实，2026-09-16）
+
+| 编号 | 落实 |
+| :--- | :--- |
+| V2 | 升级为源码判定：HMR 配置热生效（profile-boot 注释）＋ logger-console 构造按 config 注册 exporter（`vendor/logger-console/src/shared.ts:54-57`）⇒ 热生效语义链成立（仍建议隔离实例实测） |
+| V7 | 升级为源码判定：Node `--inspect` 默认 9229（官方）vs experimental-inspector 默认 9230（`index.ts:76`）⇒ 默认不冲突 |
+| P2-1 | §1 证据边界增加「log/ 清单以本文头 YAML 为唯一机器事实源」指针 |
+| 提交 | 评审文件已提交 `76968a3`；build-analysis 本体 `2c92350`（其后的修订轮 2/3 改动暂未提交，由仓库主维护决定是否并入） |
+
+> 至此，评审 P0 全部闭合、P1 闭合（V2/V7 已给出源码判定，实测列为可选）、P2 主要项落地。
+> 剩余开放：V2/V7 的隔离实例实测、以及把 `dsh-build-analysis.md` / `dsh-deep-dive` / `dsh-observability-analysis` 三份口径统一（后两份由仓库主按计划另行处理）。
