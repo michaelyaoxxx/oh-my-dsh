@@ -1,0 +1,465 @@
+{
+  "project_name": "deepseek-harness",
+  "analysis_window": "2026-06-10 ~ 2026-09-15 (近12个月，仓库全部历史)",
+  "architecture_layers": [
+    {
+      "layer_id": 0,
+      "layer_name": "Framework Foundation",
+      "description": "vendor/ 目录：源码式 vendored 的 Cordis 框架层（9 个 @deepseek-ai 包，可审计/可打补丁/锁定版本）",
+      "responsibility": "提供插件元框架、事件总线、配置 schema、加载器/HMR/Include 等基础能力，被全部业务层依赖"
+    },
+    {
+      "layer_id": 1,
+      "layer_name": "Input Sources",
+      "description": "用户请求和事件输入：Web/桌面 UI、CLI、ACP/SDK、Webhook",
+      "responsibility": "接收任务并把请求翻译为会话输入"
+    },
+    {
+      "layer_id": 2,
+      "layer_name": "Gateway",
+      "description": "API 网关、远程流式协议、profile/bundle 应用装配",
+      "responsibility": "路由流量、建立会话、装配插件树"
+    },
+    {
+      "layer_id": 3,
+      "layer_name": "Core Processing",
+      "description": "Agent 运行时、会话日志、系统提示、模型适配、子代理",
+      "responsibility": "驱动 agent loop、维护会话状态、编排模型调用"
+    },
+    {
+      "layer_id": 4,
+      "layer_name": "Tool Execution",
+      "description": "工具注册与执行管道、沙箱与权限",
+      "responsibility": "按需执行工具并安全地访问宿主能力"
+    },
+    {
+      "layer_id": 5,
+      "layer_name": "External Systems",
+      "description": "LLM 供应商、文件/SSH、网络服务、存储凭证",
+      "responsibility": "对接外部能力并返回结果"
+    }
+  ],
+  "modules": [
+    {
+      "module_name": "@deepseek-ai/cordis",
+      "path": "vendor/cordis",
+      "description": "插件元框架核心（4.0.2，被 294 个包引用）",
+      "layer": "Framework Foundation",
+      "input": "插件注册",
+      "output": "服务/事件/效果",
+      "dependencies": ["cosmokit", "schemastery"]
+    },
+    {
+      "module_name": "@deepseek-ai/cordis-plugin-loader",
+      "path": "vendor/loader",
+      "description": "插件加载器（1.0.3，被 67 个包引用）",
+      "layer": "Framework Foundation",
+      "input": "入口配置",
+      "output": "加载并挂载插件树",
+      "dependencies": ["cordis", "include"]
+    },
+    {
+      "module_name": "@deepseek-ai/schemastery",
+      "path": "vendor/schemastery",
+      "description": "类型驱动 schema 校验器（3.18.2，被 132 个包引用）",
+      "layer": "Framework Foundation",
+      "input": "配置声明",
+      "output": "校验后的配置",
+      "dependencies": ["cosmokit"]
+    },
+    {
+      "module_name": "@deepseek-ai/cordis-plugin-include",
+      "path": "vendor/include",
+      "description": "配置包含与 Patch 应用（1.0.7，被 44 个包引用）",
+      "layer": "Framework Foundation",
+      "input": "include/!!js 配置",
+      "output": "展开的入口表",
+      "dependencies": ["loader", "js-yaml"]
+    },
+    {
+      "module_name": "@deepseek-ai/cosmokit",
+      "path": "vendor/cosmokit",
+      "description": "通用工具集（1.8.3）",
+      "layer": "Framework Foundation",
+      "input": "-",
+      "output": "常量/工具函数",
+      "dependencies": []
+    },
+    {
+      "module_name": "@deepseek-ai/cordis-plugin-timer",
+      "path": "vendor/timer",
+      "description": "定时器服务（1.1.4）",
+      "layer": "Framework Foundation",
+      "input": "定时任务声明",
+      "output": "到点回调",
+      "dependencies": ["cordis"]
+    },
+    {
+      "module_name": "@deepseek-ai/cordis-plugin-hmr",
+      "path": "vendor/hmr",
+      "description": "热模块替换（1.0.17）",
+      "layer": "Framework Foundation",
+      "input": "模块变更事件",
+      "output": "热重载",
+      "dependencies": ["cordis", "esbuild"]
+    },
+    {
+      "module_name": "@deepseek-ai/cordis-plugin-group",
+      "path": "vendor/group",
+      "description": "嵌套插件组（1.0.2）",
+      "layer": "Framework Foundation",
+      "input": "插件组声明",
+      "output": "分组的生命周期",
+      "dependencies": ["cordis"]
+    },
+    {
+      "module_name": "@deepseek-ai/cordis-plugin-logger-console",
+      "path": "vendor/logger-console",
+      "description": "控制台日志导出（1.0.2）",
+      "layer": "Framework Foundation",
+      "input": "日志事件",
+      "output": "控制台输出",
+      "dependencies": ["cordis"]
+    },
+    {
+      "module_name": "Web Frontend (Web UI)",
+      "path": "apps/web, packages/client/*",
+      "description": "浏览器应用与 React UI 组件集",
+      "layer": "Input Sources",
+      "input": "用户消息",
+      "output": "会话请求事件",
+      "dependencies": ["client runtime", "core events"]
+    },
+    {
+      "module_name": "CLI",
+      "path": "apps/cli",
+      "description": "dsh 命令行入口",
+      "layer": "Input Sources",
+      "input": "终端命令",
+      "output": "装配 profile 并启动进程",
+      "dependencies": ["boot/app-boot", "bundle"]
+    },
+    {
+      "module_name": "Desktop",
+      "path": "apps/desktop, apps/desktop-host",
+      "description": "Electron 桌面壳与 host 层",
+      "layer": "Input Sources",
+      "input": "桌面交互",
+      "output": "经 IPC/管道接入后端",
+      "dependencies": ["desktop-host", "client graph"]
+    },
+    {
+      "module_name": "ACP / SDK",
+      "path": "bundle/acp-app, bundle/sdk-app, python/sdk",
+      "description": "ACP 自动化端点与 SDK 服务",
+      "layer": "Input Sources",
+      "input": "ACP/JSON-RPC 请求",
+      "output": "agent 调用",
+      "dependencies": ["sdk", "bundle/base"]
+    },
+    {
+      "module_name": "Webhook",
+      "path": "packages/webhook",
+      "description": "认证投递与 Workspace Session 创建",
+      "layer": "Input Sources",
+      "input": "外部 webhook",
+      "output": "会话创建",
+      "dependencies": ["api", "core"]
+    },
+    {
+      "module_name": "api/gateway",
+      "path": "packages/api/gateway",
+      "description": "流式远程协议（snapshot/event/journal/remote stream）",
+      "layer": "Gateway",
+      "input": "客户端连接",
+      "output": "会话/事件/快照流",
+      "dependencies": ["core", "session"]
+    },
+    {
+      "module_name": "API Controllers",
+      "path": "packages/api/*-controller",
+      "description": "session/workspace/terminal/settings 控制器",
+      "layer": "Gateway",
+      "input": "REST 请求",
+      "output": "领域操作",
+      "dependencies": ["core", "gateway"]
+    },
+    {
+      "module_name": "app-boot / Bundle Assembly",
+      "path": "packages/boot/app-boot, packages/bundle/*",
+      "description": "profile+bundle 插件树装配",
+      "layer": "Gateway",
+      "input": "profile 声明",
+      "output": "运行中插件树",
+      "dependencies": ["cordis", "bundle rows"]
+    },
+    {
+      "module_name": "core/agent + agent-loop",
+      "path": "packages/core/agent, packages/core/agent-loop",
+      "description": "Agent 接口与默认驱动（turn/step 状态机）",
+      "layer": "Core Processing",
+      "input": "会话写入",
+      "output": "模型请求与工具调度",
+      "dependencies": ["session", "llm", "system-prompt", "tools"]
+    },
+    {
+      "module_name": "core/session",
+      "path": "packages/core/session",
+      "description": "追加式 SessionEvent 日志与内存存储（被依赖 157 包）",
+      "layer": "Core Processing",
+      "input": "领域事件",
+      "output": "持久化事件流",
+      "dependencies": ["storage"]
+    },
+    {
+      "module_name": "llm",
+      "path": "packages/llm/llm",
+      "description": "消息/流词汇与适配器接缝（被依赖 125 包）",
+      "layer": "Core Processing",
+      "input": "模型历史",
+      "output": "LLM 流",
+      "dependencies": ["core", "protocol extensions"]
+    },
+    {
+      "module_name": "session persistence",
+      "path": "packages/session/*",
+      "description": "会话投影、快照、压缩",
+      "layer": "Core Processing",
+      "input": "会话事件",
+      "output": "投影/历史",
+      "dependencies": ["core", "storage"]
+    },
+    {
+      "module_name": "subagent",
+      "path": "packages/subagent",
+      "description": "子代理派生与进程驱动",
+      "layer": "Core Processing",
+      "input": "父 agent 请求",
+      "output": "子任务执行流",
+      "dependencies": ["core", "subprocess"]
+    },
+    {
+      "module_name": "core/tools",
+      "path": "packages/core/tools",
+      "description": "作用域工具注册表与守卫执行管道（被依赖 67 包）",
+      "layer": "Tool Execution",
+      "input": "tool/call 事件",
+      "output": "tool/result",
+      "dependencies": ["core", "scope"]
+    },
+    {
+      "module_name": "Tool Packages",
+      "path": "packages/fs, packages/shell, packages/subprocess, packages/terminal, packages/web, packages/mcp, packages/lsp, packages/computer-use",
+      "description": "各类宿主能力工具集",
+      "layer": "Tool Execution",
+      "input": "工具参数",
+      "output": "执行结果",
+      "dependencies": ["core/tools", "sandbox"]
+    },
+    {
+      "module_name": "Sandbox & Security",
+      "path": "packages/sandbox, packages/ssh, packages/guard, packages/preset, native/landlock-run",
+      "description": "沙箱执行、SSH 沙箱、权限预设、审批",
+      "layer": "Tool Execution",
+      "input": "工具执行请求",
+      "output": "受控执行",
+      "dependencies": ["subprocess", "credentials"]
+    },
+    {
+      "module_name": "LLM Providers",
+      "path": "packages/llm/llm-pi-ai 等 + vendor/*",
+      "description": "OpenAI 兼容与 DeepSeek 私有协议扩展",
+      "layer": "External Systems",
+      "input": "模型请求",
+      "output": "流式补全",
+      "dependencies": ["llm"]
+    },
+    {
+      "module_name": "File / SSH",
+      "path": "packages/fs, packages/ssh",
+      "description": "本地与远端文件系统",
+      "layer": "External Systems",
+      "input": "FS 调用",
+      "output": "文件结果",
+      "dependencies": ["sandbox"]
+    },
+    {
+      "module_name": "Network Services",
+      "path": "packages/web/web-search-*, packages/webhook",
+      "description": "搜索、抓取、webhook 投递",
+      "layer": "External Systems",
+      "input": "搜索/抓取请求",
+      "output": "外部数据",
+      "dependencies": ["web", "api"]
+    },
+    {
+      "module_name": "Storage & Credentials",
+      "path": "packages/storage, packages/credentials",
+      "description": "持久化存储与凭证管理",
+      "layer": "External Systems",
+      "input": "读写请求",
+      "output": "安全存储",
+      "dependencies": ["util/crypto", "core"]
+    }
+  ],
+  "loc": {
+    "total_source_lines": 774364,
+    "vendor_source_lines": 6191,
+    "modules": [
+      { "module": "client", "loc": 199953, "percentage": 25.82 },
+      { "module": "experimental", "loc": 72111, "percentage": 9.31 },
+      { "module": "api", "loc": 46677, "percentage": 6.03 },
+      { "module": "core", "loc": 45850, "percentage": 5.92 },
+      { "module": "session", "loc": 40830, "percentage": 5.27 },
+      { "module": "llm", "loc": 37058, "percentage": 4.79 },
+      { "module": "subagent", "loc": 35434, "percentage": 4.58 },
+      { "module": "extensions", "loc": 23466, "percentage": 3.03 },
+      { "module": "test-support", "loc": 22476, "percentage": 2.9 },
+      { "module": "session-query", "loc": 15477, "percentage": 2.0 },
+      { "module": "typert", "loc": 15314, "percentage": 1.98 },
+      { "module": "subprocess", "loc": 15258, "percentage": 1.97 },
+      { "module": "fs", "loc": 14350, "percentage": 1.85 },
+      { "module": "context", "loc": 12590, "percentage": 1.63 },
+      { "module": "shell", "loc": 12561, "percentage": 1.62 },
+      { "module": "other infrastructure", "loc": 244559, "percentage": 31.58 }
+    ],
+    "vendor_modules": [
+      { "module": "vendor/@deepseek-ai/cordis", "loc": 2693, "percentage": 43.5 },
+      { "module": "vendor/@deepseek-ai/cordis-plugin-loader", "loc": 961, "percentage": 15.5 },
+      { "module": "vendor/@deepseek-ai/schemastery", "loc": 902, "percentage": 14.6 },
+      { "module": "vendor/@deepseek-ai/cosmokit", "loc": 477, "percentage": 7.7 },
+      { "module": "vendor/@deepseek-ai/cordis-plugin-hmr", "loc": 463, "percentage": 7.5 },
+      { "module": "vendor/@deepseek-ai/cordis-plugin-include", "loc": 343, "percentage": 5.5 },
+      { "module": "vendor/@deepseek-ai/cordis-plugin-timer", "loc": 147, "percentage": 2.4 },
+      { "module": "vendor/@deepseek-ai/cordis-plugin-logger-console", "loc": 145, "percentage": 2.3 },
+      { "module": "vendor/@deepseek-ai/cordis-plugin-group", "loc": 3, "percentage": 0.0 }
+    ]
+  },
+  "git_heat": {
+    "window": "近12个月 (2026-06-10 ~ 2026-09-15)",
+    "total_commits": 17177,
+    "total_contributors": 58,
+    "modules": [
+      { "module": "client", "commits": 3420, "contributors": 39, "change_frequency": "high" },
+      { "module": "core", "commits": 1885, "contributors": 24, "change_frequency": "high" },
+      { "module": "subagent", "commits": 1113, "contributors": 22, "change_frequency": "high" },
+      { "module": "host", "commits": 1038, "contributors": 25, "change_frequency": "high" },
+      { "module": "llm", "commits": 858, "contributors": 23, "change_frequency": "high" },
+      { "module": "extensions", "commits": 625, "contributors": 26, "change_frequency": "medium" },
+      { "module": "bundle", "commits": 555, "contributors": 23, "change_frequency": "medium" },
+      { "module": "fs", "commits": 507, "contributors": 23, "change_frequency": "medium" },
+      { "module": "context", "commits": 490, "contributors": 18, "change_frequency": "medium" },
+      { "module": "session", "commits": 477, "contributors": 15, "change_frequency": "medium" },
+      { "module": "api", "commits": 459, "contributors": 20, "change_frequency": "medium" },
+      { "module": "code-runtime", "commits": 370, "contributors": 9, "change_frequency": "medium" },
+      { "module": "experimental", "commits": 359, "contributors": 16, "change_frequency": "medium" },
+      { "module": "subprocess", "commits": 346, "contributors": 16, "change_frequency": "medium" },
+      { "module": "goal", "commits": 332, "contributors": 17, "change_frequency": "medium" },
+      { "module": "test-support", "commits": 321, "contributors": 16, "change_frequency": "medium" },
+      { "module": "session-query", "commits": 316, "contributors": 18, "change_frequency": "medium" },
+      { "module": "hooks", "commits": 308, "contributors": 14, "change_frequency": "medium" },
+      { "module": "skill", "commits": 300, "contributors": 15, "change_frequency": "medium" },
+      { "module": "sandbox", "commits": 299, "contributors": 16, "change_frequency": "medium" },
+      { "module": "workflow", "commits": 274, "contributors": 13, "change_frequency": "medium" },
+      { "module": "util", "commits": 260, "contributors": 16, "change_frequency": "medium" },
+      { "module": "vendor (framework)", "commits": 85, "contributors": 9, "change_frequency": "low" },
+      { "module": "others (todo/preset/sdk/boot/acp...)", "commits": 2050, "contributors": 30, "change_frequency": "low" }
+    ]
+  },
+  "impact": [
+    { "module": "vendor (framework)", "impact_level": "medium-high", "reason": "被全仓 294 个包依赖（@deepseek-ai/cordis），底层框架变更波及全部业务层；源码级控制 + 19 条本地修改，属关键基础设施" },
+    { "module": "core", "impact_level": "high", "reason": "被 454 个依赖引用、1,885 commits 高频修改，是 agent 生命周期枢纽" },
+    { "module": "client", "impact_level": "high", "reason": "3,420 commits / 22,100 文件改动，横跨 UI 与运行时，依赖面最广（out 246）" },
+    { "module": "session", "impact_level": "high", "reason": "被 147 个依赖引用，会话持久化是多数模块输入来源" },
+    { "module": "llm", "impact_level": "high", "reason": "被 125 个依赖引用且持续演进（858 commits），牵动全部 agent 流程" },
+    { "module": "api", "impact_level": "medium", "reason": "网关承担全部入口流量，稳定性关键组件" },
+    { "module": "subagent", "impact_level": "medium", "reason": "1,113 commits 高频修改，向上承接 agent、向下依赖 subprocess" },
+    { "module": "util", "impact_level": "medium", "reason": "被 223 个依赖引用的底层基石，改动影响面广" },
+    { "module": "test-support", "impact_level": "medium", "reason": "被 101 个包依赖，影响测试全链路" }
+  ],
+  "data_flow": {
+    "main_flow": [
+      "Framework Foundation (vendor cordis/loader/schemastery - framework base)",
+      "Input Sources (Web UI / CLI / ACP / SDK / Webhook)",
+      "Gateway (api/gateway streaming + app-boot profile assembly)",
+      "Core Processing (core/agent agent-loop: turn/step state machine)",
+      "LLM (llm/llm: model request -> stream)",
+      "Tool Execution (core/tools: tool/call -> tools/pre-execute -> tools/execute -> tools/post-execute -> tool/result)",
+      "External Systems (LLM providers / files / network / storage)"
+    ],
+    "request_flow": "请求自输入层进入 api/gateway，经 app-boot 基于 vendor 框架装配的插件树进入 core agent-loop 的 turn/step 状态机；每 step 产生一次模型请求并调度工具",
+    "async_flow": "SessionEvent 追加到日志并经 session/event 广播；agent/* 携带 live Agent；agent/assistant-stream 提供进程内流式帧；llm/stream 与 tools/* 为瀑布事件（需 next() 委托）",
+    "message_flow": "输入经单一 inbox 进入驱动；模型历史由 deriveMessages() 从会话日志投影；turn 在输入被认领前打开、无欠债时关闭"
+  },
+  "dependency_network": {
+    "most_depended": [
+      { "module": "core", "in_degree": 454, "out_degree": 36 },
+      { "module": "util", "in_degree": 223, "out_degree": 1 },
+      { "module": "llm", "in_degree": 154, "out_degree": 63 },
+      { "module": "session", "in_degree": 147, "out_degree": 72 },
+      { "module": "client", "in_degree": 107, "out_degree": 246 },
+      { "module": "test-support", "in_degree": 101, "out_degree": 57 },
+      { "module": "api", "in_degree": 80, "out_degree": 112 },
+      { "module": "sandbox", "in_degree": 62, "out_degree": 16 },
+      { "module": "subprocess", "in_degree": 54, "out_degree": 6 },
+      { "module": "runtime-diagnostics", "in_degree": 47, "out_degree": 0 }
+    ],
+    "most_depending": [
+      { "module": "client", "in_degree": 107, "out_degree": 246 },
+      { "module": "bundle", "in_degree": 2, "out_degree": 206 },
+      { "module": "experimental", "in_degree": 0, "out_degree": 160 },
+      { "module": "subagent", "in_degree": 30, "out_degree": 143 },
+      { "module": "api", "in_degree": 80, "out_degree": 112 },
+      { "module": "shell", "in_degree": 27, "out_degree": 82 },
+      { "module": "session", "in_degree": 147, "out_degree": 72 },
+      { "module": "llm", "in_degree": 154, "out_degree": 63 },
+      { "module": "context", "in_degree": 12, "out_degree": 60 },
+      { "module": "test-support", "in_degree": 101, "out_degree": 57 }
+    ],
+    "central_modules": [
+      { "module": "core", "in_degree": 454, "out_degree": 36, "total": 490, "role": "系统枢纽" },
+      { "module": "client", "in_degree": 107, "out_degree": 246, "total": 353, "role": "消费/UI 枢纽" },
+      { "module": "util", "in_degree": 223, "out_degree": 1, "total": 224, "role": "底层基石" },
+      { "module": "session", "in_degree": 147, "out_degree": 72, "total": 219, "role": "核心状态层" },
+      { "module": "llm", "in_degree": 154, "out_degree": 63, "total": 217, "role": "模型接缝" },
+      { "module": "bundle", "in_degree": 2, "out_degree": 206, "total": 208, "role": "装配入口" },
+      { "module": "api", "in_degree": 80, "out_degree": 112, "total": 192, "role": "网关" },
+      { "module": "subagent", "in_degree": 30, "out_degree": 143, "total": 173, "role": "子代理枢纽" },
+      { "module": "test-support", "in_degree": 101, "out_degree": 57, "total": 158, "role": "测试基建" },
+      { "module": "experimental", "in_degree": 0, "out_degree": 160, "total": 160, "role": "实验层" }
+    ],
+    "top_packages": [
+      { "package": "@deepseek-ai/cordis (vendor)", "references": 294 },
+      { "package": "core/session", "references": 157 },
+      { "package": "@deepseek-ai/schemastery (vendor)", "references": 132 },
+      { "package": "@deepseek-ai/cordis-plugin-loader (vendor)", "references": 67 },
+      { "package": "llm/llm", "references": 125 },
+      { "package": "core/agent", "references": 102 },
+      { "package": "@deepseek-ai/cordis-plugin-include (vendor)", "references": 44 }
+    ],
+    "vendor_references": [
+      { "package": "@deepseek-ai/cordis", "references": 294 },
+      { "package": "@deepseek-ai/schemastery", "references": 132 },
+      { "package": "@deepseek-ai/cordis-plugin-loader", "references": 67 },
+      { "package": "@deepseek-ai/cordis-plugin-include", "references": 44 },
+      { "package": "@deepseek-ai/cosmokit", "references": 8 },
+      { "package": "@deepseek-ai/cordis-plugin-timer", "references": 7 },
+      { "package": "@deepseek-ai/cordis-plugin-group", "references": 4 },
+      { "package": "@deepseek-ai/cordis-plugin-hmr", "references": 3 },
+      { "package": "@deepseek-ai/cordis-plugin-logger-console", "references": 1 }
+    ]
+  },
+  "highlights": [
+    "vendor 框架底座是全仓影响力最大的层：@deepseek-ai/cordis 被 294 个包依赖、schemastery 被 132 个包依赖，位居包级被依赖榜前二；源码式 vendor + 19 条本地增强，实现对框架层的完全掌控。",
+    "core 占总代码量约 6%，但被 454 个依赖引用（in_degree 第一），承担 agent 生命周期与工具管道，是系统最核心枢纽。",
+    "client 占总代码量 25.8%（约 20 万行），53 个子包覆盖 Web/桌面 UI 与客户端运行时，是最大的产品面。",
+    "api/gateway 承担所有入口流量，流式协议 + 6 个 API 控制器包，是稳定性关键组件，建议重点保障。",
+    "最近 12 个月修改最多的是 client、core、subagent、host、llm 五个模块（热度 HIGH），17,177 commits / 58 贡献者。",
+    "everything-is-a-plugin 架构成熟：基于自有 vendor Cordis，核心能力均可通过插件替换，profile+bundle 三层支撑扩展生态。",
+    "依赖分层清晰：vendor 框架 + core/util 为底层基石（被依赖榜前列），bundle/client 为装配/消费入口，依赖方向单向可靠。",
+    "测试与质量基建投入大：1,221 个测试文件 + agent-loop 测试工具包，test-support 被 101 个包依赖。",
+    "安全体系内建：sandbox/ssh/guard/preset + 原生 Landlock 沙箱，工具执行层默认受控。",
+    "多端产品矩阵完整：Web、CLI、桌面、ACP/SDK、Python SDK 五条产品线共用同一 harness 内核。",
+    "项目具备典型 Agent 平台架构特征：框架层→输入层→网关→核心处理→工具执行→外部系统的六层结构清晰，事件驱动 + 插件化，具备平台化演进基础。"
+  ]
+}
