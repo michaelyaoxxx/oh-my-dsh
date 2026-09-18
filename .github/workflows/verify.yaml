@@ -34,18 +34,18 @@ jobs:
       #    与 scripts/release.sh、Jenkins 侧共用同一实现；未推送 commit 会失败）
       - name: Check submodule pins
         run: bash scripts/check-pins.sh
-      # 1.5 shellcheck 静态检查（本地以 0.11.0 -S style 全绿；CI 固定同版本语义）
+      # 1.5 shellcheck 静态检查（本地以 0.9.0 -S style 全绿；CI 固定同版本语义）
       - name: ShellCheck scripts
         run: |
           set -eu
-          scversion="v0.11.0"
+          scversion="v0.9.0"
           asset="shellcheck-${scversion}.linux.x86_64.tar.xz"
           url="https://github.com/koalaman/shellcheck/releases/download/${scversion}/${asset}"
           # 校验和是**信任锚点**：校验后我们执行的是这个确定的字节序列，而不是「当前 URL 上的内容」。
           # ⚠️ 来源说明：shellcheck 的 release **未提供** SHA256SUMS 资产，故该值系首次下载官方
           #    归档后本地计算（TOFU）。它能防「同一 URL 上的资产被替换/回归」，**不构成**对首次
           #    下载的独立验证。升级 scversion 时必须同步更新此值。
-          sha256_expected="8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198"
+          sha256_expected="700324c6dd0ebea0117591c6cc9d7350d9c7c5c287acbad7630fa17b1d4d9e2f"
           curl -fsSL -o "$asset" "$url"
           echo "${sha256_expected}  ${asset}" | sha256sum -c -
           tar -xJf "$asset"
