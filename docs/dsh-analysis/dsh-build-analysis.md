@@ -90,8 +90,7 @@ tags:
 - Harness 构建源码
 - Harness Host、Client、Web 和 Agent 相关源码
 
-> **证据边界**：本文主证据为 **9/15 setup 日志**（`log/setup-20260915T110859Z-258716.log`）；`9/16 的 dev 日志（log/dev-20260916*）仅作“运行期漂移”观测，不构成正文构建结论来源。
-> 完整 `log/` 清单以本文头 YAML `primary_log` / `related_logs` 为唯一机器事实源（§23.1 同口径）。
+> **证据边界**：本文主证据为 **9/15 setup 日志**（`log/setup-20260915T110859Z-258716.log`）；`9/16 的 dev 日志（log/dev-20260916*）仅作“运行期漂移”观测，不构成正文构建结论来源。 完整 `log/`清单以本文头 YAML`primary_log`/`related_logs` 为唯一机器事实源（§23.1 同口径）。
 
 分析目标包括：
 
@@ -173,15 +172,15 @@ tags:
 
 本文引用的权威来源（均于 2026-09-16 抓取并核验）：
 
-| # | 来源 | URL | 与本文档的关系 |
-| :- | :- | :- | :- |
-| 1 | DeepSeek Harness 官方仓库（GitHub） | <https://github.com/deepseek-ai/deepseek-harness> | “Everything is a Plugin”，Powered by **Cordis**；MIT；默认分支 **master**；Run from source = `pnpm install → pnpm run build → pnpm dsh web` |
-| 2 | 官方文档站 | <https://deepseek-harness.github.io/deepseek-harness/> | 架构（`/en/reference/`）、插件教程（`/en/develop/basic/`） |
-| 3 | rolldown 官方 | <https://rolldown.rs/> | tsdown 的打包后端：Rust 实现、Rollup 兼容 API、esbuild 特性对等（VoidZero Inc.） |
-| 4 | Vite 官方 Build | <https://vite.dev/guide/build.html> | `vite build` 以 `<root>/index.html` 为入口，产出可静态托管的 bundle；非浏览器库可直接用 tsdown/rolldown |
-| 5 | TypeScript 官方 Project References | <https://www.typescriptlang.org/docs/handbook/project-references.html> | `tsc -b`、composite、incremental、`.tsbuildinfo`、solution（`files:[]` + references）模式 |
-| 6 | pnpm 官方 Motivation | <https://pnpm.io/motivation> | 符号链接 node_modules、内容寻址 store、三阶段安装 |
-| 7 | tsx（TypeScript Execute） | <https://tsx.is/> | dev 期把 `.ts` 按需转译再交 Node ESM loader（对应 `node --import tsx/esm`） |
+| # | 来源                                | URL                                                                                                                                         | 与本文档的关系                                                                                                                                               |
+| :- | :---------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------ | :----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 | DeepSeek Harness 官方仓库（GitHub） | [https://github.com/deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)                                           | “Everything is a Plugin”，Powered by**Cordis**；MIT；默认分支 **master**；Run from source = `pnpm install → pnpm run build → pnpm dsh web` |
+| 2 | 官方文档站                          | [https://deepseek-harness.github.io/deepseek-harness/](https://deepseek-harness.github.io/deepseek-harness/)                                 | 架构（`/en/reference/`）、插件教程（`/en/develop/basic/`）                                                                                               |
+| 3 | rolldown 官方                       | [https://rolldown.rs/](https://rolldown.rs/)                                                                                                 | tsdown 的打包后端：Rust 实现、Rollup 兼容 API、esbuild 特性对等（VoidZero Inc.）                                                                             |
+| 4 | Vite 官方 Build                     | [https://vite.dev/guide/build.html](https://vite.dev/guide/build.html)                                                                       | `vite build` 以 `<root>/index.html` 为入口，产出可静态托管的 bundle；非浏览器库可直接用 tsdown/rolldown                                                  |
+| 5 | TypeScript 官方 Project References  | [https://www.typescriptlang.org/docs/handbook/project-references.html](https://www.typescriptlang.org/docs/handbook/project-references.html) | `tsc -b`、composite、incremental、`.tsbuildinfo`、solution（`files:[]` + references）模式                                                              |
+| 6 | pnpm 官方 Motivation                | [https://pnpm.io/motivation](https://pnpm.io/motivation)                                                                                     | 符号链接 node_modules、内容寻址 store、三阶段安装                                                                                                            |
+| 7 | tsx（TypeScript Execute）           | [https://tsx.is/](https://tsx.is/)                                                                                                           | dev 期把`.ts` 按需转译再交 Node ESM loader（对应 `node --import tsx/esm`）                                                                               |
 
 > 标 `[验]` 的事实均在本机实测；涉及版本的结论以 `package.json` / lockfile 与日志为准。
 
@@ -1447,8 +1446,7 @@ Top-level Make/Task runner
 
 ### 15.5 一句话总结
 
-> 该仓库的 TypeScript 层由 `tsc -b
-` 主导：增量语义基于 `.tsbuildinfo`/类型签名；tsdown/Rolldown 与 Vite 分守 package 与 Web 的运行时模块图；根 Makefile 只做统一入口。Native addon 由独立 C 构建脚本承担——这三层并非 Make 单点能覆盖。
+> 该仓库的 TypeScript 层由 `tsc -b ` 主导：增量语义基于 `.tsbuildinfo`/类型签名；tsdown/Rolldown 与 Vite 分守 package 与 Web 的运行时模块图；根 Makefile 只做统一入口。Native addon 由独立 C 构建脚本承担——这三层并非 Make 单点能覆盖。
 
 ---
 
@@ -1458,21 +1456,21 @@ Top-level Make/Task runner
 
 ### 16.1 本轮观测到的告警（非错误）
 
-| 告警（日志原文/现象） | 类别 | 判定依据 | 处置/引用 |
-| :--- | :--- | :--- | :--- |
-| `组件 X 是 source-build，但入口已被 git 跟踪`（modlens / modsearch / dsh-market） | 供应链/运维 | `scripts/check-components.mjs` `BUILDABLE_ENTRY` 判定；`config/README.md` 158–170；`ADR-0005` 97–113 | 只写告警不阻断；构建会弄脏 submodule 触发部署快照保真检查；`remediation-plan.md` L321 明示属预期 |
-| `[PLUGIN_TIMINGS]`、`noExternal is deprecated`、`external is deprecated`、`inlineDynamicImports is deprecated` | 工具链版本性弃用 | tsdown 0.22.2 / rolldown 1.1.1 输出 | 非错误；升版本时可清 |
-| `Some chunks are larger than 500 kB` | 打包体量 | Vite/tsdown 提示 | 建议代码分割，非错误（如 `dist/assets/vendor-*.js` 740 kB） |
-| `Unsupported platform … linux-arm64` | 平台矩阵过滤 | `native/system/scripts/build.ts` 读 `prebuilds.json` | 本机 linux-x64 只编匹配项，属预期 |
-| `INEFFECTIVE_DYNAMIC_IMPORT` | bundler 提示 | tsdown | 动态导入被拍平；非错误 |
+| 告警（日志原文/现象）                                                                                                  | 类别             | 判定依据                                                                                                       | 处置/引用                                                                                          |
+| :--------------------------------------------------------------------------------------------------------------------- | :--------------- | :------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------- |
+| `组件 X 是 source-build，但入口已被 git 跟踪`（modlens / modsearch / dsh-market）                                    | 供应链/运维      | `scripts/check-components.mjs` `BUILDABLE_ENTRY` 判定；`config/README.md` 158–170；`ADR-0005` 97–113 | 只写告警不阻断；构建会弄脏 submodule 触发部署快照保真检查；`remediation-plan.md` L321 明示属预期 |
+| `[PLUGIN_TIMINGS]`、`noExternal is deprecated`、`external is deprecated`、`inlineDynamicImports is deprecated` | 工具链版本性弃用 | tsdown 0.22.2 / rolldown 1.1.1 输出                                                                            | 非错误；升版本时可清                                                                               |
+| `Some chunks are larger than 500 kB`                                                                                 | 打包体量         | Vite/tsdown 提示                                                                                               | 建议代码分割，非错误（如`dist/assets/vendor-*.js` 740 kB）                                       |
+| `Unsupported platform … linux-arm64`                                                                                | 平台矩阵过滤     | `native/system/scripts/build.ts` 读 `prebuilds.json`                                                       | 本机 linux-x64 只编匹配项，属预期                                                                  |
+| `INEFFECTIVE_DYNAMIC_IMPORT`                                                                                         | bundler 提示     | tsdown                                                                                                         | 动态导入被拍平；非错误                                                                             |
 
 ### 16.2 与构建/装配相关的已登记缺陷（见 `docs/backlog.md`）
 
-| 编号 | 内容 | 与本文档的关联 |
-| :--- | :--- | :--- |
-| B10 | 按裸名挂载的 vendor 包，`barePackageManifest` 解析不到就 throw | 解析面≠运行面：loader 有自己的解析根（`patches/mount-logger-console.yml` 注释，2026-09-15 实测） |
-| B11 | `setup.sh` 与 `remote-install.sh` 各持一份动作原语，无门禁保证同步 | 本文档 §5.4 安装调用链在部署侧有第二份实现 |
-| B13 | `ClientModuleRegistry` 构造时 `webServer` 已就绪则 else 分支属性访问崩（`packages/client/modules/src/index.ts:570-577`） | 属启动（非构建）问题；重跑 boot 可绕过 |
+| 编号 | 内容                                                                                                                           | 与本文档的关联                                                                                      |
+| :--- | :----------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------- |
+| B10  | 按裸名挂载的 vendor 包，`barePackageManifest` 解析不到就 throw                                                               | 解析面≠运行面：loader 有自己的解析根（`patches/mount-logger-console.yml` 注释，2026-09-15 实测） |
+| B11  | `setup.sh` 与 `remote-install.sh` 各持一份动作原语，无门禁保证同步                                                         | 本文档 §5.4 安装调用链在部署侧有第二份实现                                                         |
+| B13  | `ClientModuleRegistry` 构造时 `webServer` 已就绪则 else 分支属性访问崩（`packages/client/modules/src/index.ts:570-577`） | 属启动（非构建）问题；重跑 boot 可绕过                                                              |
 
 ### 16.3 供应链硬约束（与构建直接相关）
 
@@ -1492,21 +1490,22 @@ Top-level Make/Task runner
 
 关键数字（已实测，绑定本次 commit 与日志）：
 
-| 项 | 值 | 来源（可复现） |
-| :--- | :--- | :--- |
-| TypeScript | 6.0.3 | `node harness/node_modules/typescript/bin/tsc --version`（实测） |
+| 项                                                        | 值                                                                    | 来源（可复现）                                                                          |
+| :-------------------------------------------------------- | :-------------------------------------------------------------------- | :-------------------------------------------------------------------------------------- |
+| TypeScript                                                | 6.0.3                                                                 | `node harness/node_modules/typescript/bin/tsc --version`（实测）                      |
 | workspace 包数（packages+apps，不含 vendor/node_modules） | **278**（§2 警告区“280”为含 vendor 的另一口径，以 278 为准） | `find packages apps -name package.json -not -path "*/node_modules/*" \| wc -l`（实测） |
-| `.tsbuildinfo` 数 | 293 | `find . -name '*.tsbuildinfo' -not -path '*/node_modules/*' \| wc -l`（实测） |
-| tsconfig.host / tsconfig.client 顶层 references | **226 / 68** | JSONC 注释剥离后 `references.length`（实测） |
-| tsdown / rolldown | v0.22.2 / v1.1.1 | setup 日志 `tsdown v0.22.2 powered by rolldown v1.1.1` |
-| Vite | 6.4.3，`349 modules transformed.`，`✓ built in 4.02s` | setup 日志 L3940 / L3942 / L4039 |
-| Client artifact record | 234 artifacts / 2 public values | setup 日志 L4040 |
-| Web 输出 | `harness/apps/web/dist/**`（index.html 0.68 kB） | `ls harness/apps/web/dist` + 日志 L3945 |
-| Native 输出 | `native/system/packages/linux-x64/bin/glibc/system.node` | 日志 `build: built linux-x64/bin/glibc/system.node` |
+| `.tsbuildinfo` 数                                       | 293                                                                   | `find . -name '*.tsbuildinfo' -not -path '*/node_modules/*' \| wc -l`（实测）          |
+| tsconfig.host / tsconfig.client 顶层 references           | **226 / 68**                                                    | JSONC 注释剥离后`references.length`（实测）                                           |
+| tsdown / rolldown                                         | v0.22.2 / v1.1.1                                                      | setup 日志`tsdown v0.22.2 powered by rolldown v1.1.1`                                 |
+| Vite                                                      | 6.4.3，`349 modules transformed.`，`✓ built in 4.02s`            | setup 日志 L3940 / L3942 / L4039                                                        |
+| Client artifact record                                    | 234 artifacts / 2 public values                                       | setup 日志 L4040                                                                        |
+| Web 输出                                                  | `harness/apps/web/dist/**`（index.html 0.68 kB）                    | `ls harness/apps/web/dist` + 日志 L3945                                               |
+| Native 输出                                               | `native/system/packages/linux-x64/bin/glibc/system.node`            | 日志`build: built linux-x64/bin/glibc/system.node`                                    |
 
 **结论**：本仓构建是「产物即证据」——`tsc (lib/types)` → `tsdown (lib/*)` → `vite (apps/web/dist)` 三层产物 + native `.node` + boot 冒烟共同成立才算一次可复现闭环；单看日志“Build complete”不足为凭。
 
 ---
+
 # 第七部分：`make dev` 静态启动链路（源码级，正文已实现）
 
 ## 18. `make dev` 静态启动链路分析
@@ -1542,13 +1541,13 @@ make dev
 
 ### 18.5 cordis 装配后的关键组件（源码锚点）
 
-| 组件 | 包/文件 | 关键点 |
-| :--- | :--- | :--- |
-| `web-startup` | `packages/bundle/web-app/src/startup.ts` | host/port/openBrowser/printUrl/trustedHosts 的 schema 与 `--trusted-host` 旗标 |
-| `webserver` | `packages/host/webserver/src/index.ts:61-127` | `host`：`127.0.0.1'|'0.0.0.0'`；`port`：natural ≤65535 |
-| `web-runtime`/web-app | `packages/bundle/web-app/src/index.ts:46-64,226-275` | printUrl→打印 `dsh web: http://127.0.0.1:3080/?token=…`；openBrowser 通过 SSH 时跳过；trustedHosts 参与 fence |
-| `client-modules` | `packages/client/modules/src/index.ts:500-600` | 扫描 client 包、合成 `__DSH_BOOT__` manifest、把 `/plugins` 路由挂到 webserver |
-| logger | `vendor/cordis/src/logger.ts:141-160` | 级别阈值查表（`levels[name]`→`levels.default`→`this.level`→INFO） |
+| 组件                    | 包/文件                                                | 关键点                                                                                                           |
+| :---------------------- | :----------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------- |
+| `web-startup`         | `packages/bundle/web-app/src/startup.ts`             | host/port/openBrowser/printUrl/trustedHosts 的 schema 与`--trusted-host` 旗标                                  |
+| `webserver`           | `packages/host/webserver/src/index.ts:61-127`        | `host`：`127.0.0.1'                                                                                            |
+| `web-runtime`/web-app | `packages/bundle/web-app/src/index.ts:46-64,226-275` | printUrl→打印`dsh web: http://127.0.0.1:3080/?token=…`；openBrowser 通过 SSH 时跳过；trustedHosts 参与 fence |
+| `client-modules`      | `packages/client/modules/src/index.ts:500-600`       | 扫描 client 包、合成`__DSH_BOOT__` manifest、把 `/plugins` 路由挂到 webserver                                |
+| logger                  | `vendor/cordis/src/logger.ts:141-160`                | 级别阈值查表（`levels[name]`→`levels.default`→`this.level`→INFO）                                       |
 
 ### 18.6 里程碑输出
 
@@ -1580,6 +1579,7 @@ make -> bash(recipe: link-plugins + cd harness) -> pnpm dsh
 - 进程完全在**主内存宿主内**：cordis、agent-loop、session、llm 均在同一 Node 进程，无多进程宿主（与“everything is a plugin”对应）。
 
 ---
+
 # 第八部分：运行期交互骨架（为动态分析立标）
 
 ## 20. 网页加载与 Host/Client 交互
@@ -1592,6 +1592,7 @@ make -> bash(recipe: link-plugins + cd harness) -> pnpm dsh
 ### 20.2 浏览器侧 boot（`packages/client/web/src/boot.ts`）
 
 `AppWebEntry.run()`：
+
 1. `await __DSH_BOOT_READY__?.promise`；
 2. `win.__ModuleLoader__.create({ boot })` → ClientModuleSystem；
 3. `new Context()` + `ctx.plugin(Loader)`、`loader.internal = modules`；
@@ -1614,11 +1615,11 @@ make -> bash(recipe: link-plugins + cd harness) -> pnpm dsh
 
 ### 21.1 cordis 三件套（`vendor/cordis/src/`）
 
-| 机制 | 文件 | 说明 |
-| :--- | :--- | :--- |
-| `Context` / service | `context.ts`（`this.logger = new LoggerService`，:81） | 所有服务的注入面 |
-| `Fiber` | `fiber.ts` | 每个 entry 一个 fiber：按 `inject` 等 service 就绪再 apply；`ctx.effect` 逆序回滚 |
-| `Logger` | `logger.ts:141-160` | 级别阈值查表（§18.5） |
+| 机制                  | 文件                                                       | 说明                                                                                 |
+| :-------------------- | :--------------------------------------------------------- | :----------------------------------------------------------------------------------- |
+| `Context` / service | `context.ts`（`this.logger = new LoggerService`，:81） | 所有服务的注入面                                                                     |
+| `Fiber`             | `fiber.ts`                                               | 每个 entry 一个 fiber：按`inject` 等 service 就绪再 apply；`ctx.effect` 逆序回滚 |
+| `Logger`            | `logger.ts:141-160`                                      | 级别阈值查表（§18.5）                                                               |
 
 ### 21.2 loader/include/group（`vendor/loader`、`vendor/include`）
 
@@ -1636,69 +1637,71 @@ make -> bash(recipe: link-plugins + cd harness) -> pnpm dsh
 - **profile 回退链**：`healProfilesModuleFallback` + `$DSH_HOME/profiles/node_modules`（NODE_PATH 式回退）承载 `@deepseek-ai/dsh-web-app`、cordis 系列（group/include/loader/hmr）。
 
 ---
+
 # 第九部分：收尾
 
 ## 22. 待核验事项
 
-| # | 事项 | 性质 | 下一步 |
-| :- | :--- | :--- | :--- |
-| V1 | B13 竞态（`ClientModuleRegistry`/webServer）复现率与触发条件 | 启动期 | 反复冷启动统计；`NODE_DEBUG=module,esm` + 顺序探针 |
-| V2 | log live-reload 对 logger `levels` 是否真正热生效 | **[验] 实测不可观测**（2026-09-16，隔离实例 `--port 0`+拷贝 `$DSH_HOME`）：启动前后设 `levels.default=3`，boot / HTTP 流量 / 触碰 patch 三窗口均 **0 条 `[D]`**；全仓仅 4 处 `logger.debug()`（auth 授权撤销 / webworker tunnel / webhook 事后 / `vendor/hmr:245` 属模块热重载路径非本 watch）⇒ 该 profile 无 debug 发射源，热生效无法证真亦非证伪 | 要看更细日志请走 `NODE_DEBUG=http,net,module,esm` / `NODE_OPTIONS=--inspect` / `vite DEBUG` / 隧道日志层面 |
-| V3 | workspace 计数口径（本文实测 278 vs §2 警告区 280） | 计数 | 统一为「packages+apps 内 package.json，不含 vendor/node_modules」口径并回写 |
-| V4 | 9/16 多次 `make dev` 日志（`log/dev-20260916*`）与本文档 9/15 基线的差异 | 运行期漂移 | 逐一对齐告警/新行为；抽 1 份做 host/client 动态分析基线 |
-| V5 | tsdown “Granting execute permission to lib/bin.js” 由哪个阶段完成 | 工具链 | 查 tsdown 的 shebang/CLI 后处理源码 |
-| V6 | Client 面 CJS `client.js` 的实际模块语义（`type`/format/loader） | 打包语义 | 已给判据（§9.4），待 loader 侧确认 |
-| V7 | `NODE_OPTIONS=--inspect` 与 experimental-inspector 并存时的端口 | **[验] 实测通过**（2026-09-16）：隔离实例 `NODE_OPTIONS=--inspect`（默认 9229）确认在 **9229 监听**，实例 `--port 0`=38307，与真实 3080/2021 无冲突；experimental-inspector 默认 9230（`packages/experimental/inspector/src/index.ts:76`，源码）⇒ **默认端口不冲突** | 同端口时才需 `--inspect=<explicit port>` 显式错开 |
-| V8 | Host refs=226 是否含 vendor；二次构建是否命中增量（8s→1-2s 需复跑） | 增量 | 按 §14.5 三连实验复跑 |
+| #  | 事项                                                                        | 性质                                                                                                                                                                                                                                                                                                                                                                        | 下一步                                                                                                          |
+| :- | :-------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- |
+| V1 | B13 竞态（`ClientModuleRegistry`/webServer）复现率与触发条件              | 启动期                                                                                                                                                                                                                                                                                                                                                                      | 反复冷启动统计；`NODE_DEBUG=module,esm` + 顺序探针                                                            |
+| V2 | log live-reload 对 logger`levels` 是否真正热生效                          | **[验] 实测不可观测**（2026-09-16，隔离实例 `--port 0`+拷贝 `$DSH_HOME`）：启动前后设 `levels.default=3`，boot / HTTP 流量 / 触碰 patch 三窗口均 **0 条 `[D]`**；全仓仅 4 处 `logger.debug()`（auth 授权撤销 / webworker tunnel / webhook 事后 / `vendor/hmr:245` 属模块热重载路径非本 watch）⇒ 该 profile 无 debug 发射源，热生效无法证真亦非证伪 | 要看更细日志请走`NODE_DEBUG=http,net,module,esm` / `NODE_OPTIONS=--inspect` / `vite DEBUG` / 隧道日志层面 |
+| V3 | workspace 计数口径（本文实测 278 vs §2 警告区 280）                        | 计数                                                                                                                                                                                                                                                                                                                                                                        | 统一为「packages+apps 内 package.json，不含 vendor/node_modules」口径并回写                                     |
+| V4 | 9/16 多次`make dev` 日志（`log/dev-20260916*`）与本文档 9/15 基线的差异 | 运行期漂移                                                                                                                                                                                                                                                                                                                                                                  | 逐一对齐告警/新行为；抽 1 份做 host/client 动态分析基线                                                         |
+| V5 | tsdown “Granting execute permission to lib/bin.js” 由哪个阶段完成         | 工具链                                                                                                                                                                                                                                                                                                                                                                      | 查 tsdown 的 shebang/CLI 后处理源码                                                                             |
+| V6 | Client 面 CJS`client.js` 的实际模块语义（`type`/format/loader）         | 打包语义                                                                                                                                                                                                                                                                                                                                                                    | 已给判据（§9.4），待 loader 侧确认                                                                             |
+| V7 | `NODE_OPTIONS=--inspect` 与 experimental-inspector 并存时的端口           | **[验] 实测通过**（2026-09-16）：隔离实例 `NODE_OPTIONS=--inspect`（默认 9229）确认在 **9229 监听**，实例 `--port 0`=38307，与真实 3080/2021 无冲突；experimental-inspector 默认 9230（`packages/experimental/inspector/src/index.ts:76`，源码）⇒ **默认端口不冲突**                                                                               | 同端口时才需`--inspect=<explicit port>` 显式错开                                                              |
+| V8 | Host refs=226 是否含 vendor；二次构建是否命中增量（8s→1-2s 需复跑）        | 增量                                                                                                                                                                                                                                                                                                                                                                        | 按 §14.5 三连实验复跑                                                                                          |
 
 ## 23. 关键证据索引
 
 ### 23.1 内部证据（本仓）
 
-| 类别 | 条目 |
-| :--- | :--- |
-| 日志 | 以本文头 YAML `primary_log` / `related_logs` 为**唯一机器事实源**；本文强相关：`log/setup-20260915T110859Z-258716.log`（主证据）、`log/link-plugins-20260915T111629Z-328055.log`、`log/dev-20260915T111700Z-sample.log`（boot 样本，手工拷贝自 9/15 实测）、`log/dev-20260915T132106Z-971922.log`（9/15 原生 tee）、`log/dev-20260916*`（运行期漂移观测） |
-| 脚本 | `scripts/setup.sh`、`scripts/prepare-executor.sh`、`scripts/link-plugins.sh`、`scripts/merge-profile-patch.mjs`、`scripts/check-components.mjs`、`scripts/check-all.sh` |
-| harness 构建 | `harness/scripts/build.ts`（44-46 行三阶段）、`harness/native/system/scripts/build.ts`、`harness/tsconfig.host.json`/`client.json`、`harness/tsdown.config.ts`、`harness/apps/web/vite.config.ts`、`harness/apps/web/package.json` |
-| harness 启动 | `apps/cli/src/{bin,args,plugin,profile-boot}.ts`、`packages/boot/app-boot/src/{index,profile}.ts`、`vendor/cordis/src/{context,fiber,logger}.ts` |
-| harness 运行时 | `packages/host/webserver/src/index.ts`、`packages/bundle/web-app/src/{index,startup}.ts`、`packages/client/{web/src/boot.ts,modules/src/index.ts,connection/src/*}`、`packages/api/gateway/src/stream-protocol.ts`、`packages/core/agent-loop/src/*`、`packages/llm/llm-deepseek/src/adapter.ts` |
-| 第三方 | `plugins/dsh-web/node_modules/.pnpm/cloudflared@0.7.3/node_modules/cloudflared/lib/{tunnel,constants,handler}.js` |
-| 其他 | `patches/mount-logger-console.yml`、`config/components.json`、`config/README.md`、`docs/backlog.md`、`docs/remediation-plan.md` |
+| 类别           | 条目                                                                                                                                                                                                                                                                                                                                                                         |
+| :------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 日志           | 以本文头 YAML`primary_log` / `related_logs` 为**唯一机器事实源**；本文强相关：`log/setup-20260915T110859Z-258716.log`（主证据）、`log/link-plugins-20260915T111629Z-328055.log`、`log/dev-20260915T111700Z-sample.log`（boot 样本，手工拷贝自 9/15 实测）、`log/dev-20260915T132106Z-971922.log`（9/15 原生 tee）、`log/dev-20260916*`（运行期漂移观测） |
+| 脚本           | `scripts/setup.sh`、`scripts/prepare-executor.sh`、`scripts/link-plugins.sh`、`scripts/merge-profile-patch.mjs`、`scripts/check-components.mjs`、`scripts/check-all.sh`                                                                                                                                                                                          |
+| harness 构建   | `harness/scripts/build.ts`（44-46 行三阶段）、`harness/native/system/scripts/build.ts`、`harness/tsconfig.host.json`/`client.json`、`harness/tsdown.config.ts`、`harness/apps/web/vite.config.ts`、`harness/apps/web/package.json`                                                                                                                             |
+| harness 启动   | `apps/cli/src/{bin,args,plugin,profile-boot}.ts`、`packages/boot/app-boot/src/{index,profile}.ts`、`vendor/cordis/src/{context,fiber,logger}.ts`                                                                                                                                                                                                                       |
+| harness 运行时 | `packages/host/webserver/src/index.ts`、`packages/bundle/web-app/src/{index,startup}.ts`、`packages/client/{web/src/boot.ts,modules/src/index.ts,connection/src/*}`、`packages/api/gateway/src/stream-protocol.ts`、`packages/core/agent-loop/src/*`、`packages/llm/llm-deepseek/src/adapter.ts`                                                                 |
+| 第三方         | `plugins/dsh-web/node_modules/.pnpm/cloudflared@0.7.3/node_modules/cloudflared/lib/{tunnel,constants,handler}.js`                                                                                                                                                                                                                                                          |
+| 其他           | `patches/mount-logger-console.yml`、`config/components.json`、`config/README.md`、`docs/backlog.md`、`docs/remediation-plan.md`                                                                                                                                                                                                                                    |
 
 ### 23.2 外部权威来源（访问与核验 2026-09-16）
 
-| 来源 | URL |
-| :--- | :--- |
-| DeepSeek Harness 官方仓库（GitHub，master 分支，MIT） | <https://github.com/deepseek-ai/deepseek-harness> |
-| 官方文档站 | <https://deepseek-harness.github.io/deepseek-harness/> |
-| rolldown 官方 | <https://rolldown.rs/> |
-| Vite Build 官方 | <https://vite.dev/guide/build.html> |
-| TypeScript Project References 官方 | <https://www.typescriptlang.org/docs/handbook/project-references.html> |
-| pnpm Motivation 官方 | <https://pnpm.io/motivation> |
-| tsx（TypeScript Execute） | <https://tsx.is/> |
+| 来源                                                  | URL                                                                                                                                         |
+| :---------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------ |
+| DeepSeek Harness 官方仓库（GitHub，master 分支，MIT） | [https://github.com/deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)                                           |
+| 官方文档站                                            | [https://deepseek-harness.github.io/deepseek-harness/](https://deepseek-harness.github.io/deepseek-harness/)                                 |
+| rolldown 官方                                         | [https://rolldown.rs/](https://rolldown.rs/)                                                                                                 |
+| Vite Build 官方                                       | [https://vite.dev/guide/build.html](https://vite.dev/guide/build.html)                                                                       |
+| TypeScript Project References 官方                    | [https://www.typescriptlang.org/docs/handbook/project-references.html](https://www.typescriptlang.org/docs/handbook/project-references.html) |
+| pnpm Motivation 官方                                  | [https://pnpm.io/motivation](https://pnpm.io/motivation)                                                                                     |
+| tsx（TypeScript Execute）                             | [https://tsx.is/](https://tsx.is/)                                                                                                           |
 
 ## 24. 名词、术语和缩略语
 
-| 术语 | 含义 |
-| :--- | :--- |
-| TS / tsc | TypeScript / 其编译器（`tsc -b` 为 build 模式） |
-| tsdown / rolldown | 打包器 / 其后端引擎（Rust） |
-| vite | 前端构建/开发服务器 |
-| tsx | TS 源码按需转译执行器（`node --import tsx/esm`） |
-| V8 / Node | JS 引擎 / 运行时（ESM loader → V8） |
-| cordis | DI 容器 + Fiber 生命周期 |
-| Fiber / inject / provide / effect | 插件执行单元 / 依赖声明 / 服务提供 / 逆序清理 |
-| profile / bundle / patch | 装配层 / 可装配插件层 / 配置片段（整表替换） |
-| entry / loader / include / group | 装配单元 / 加载器 / 注入 / 分面 |
-| ESM / CJS | 两种模块系统（本仓打包成 CJS/ESM 双面） |
-| ESM loader | Node 的模块加载管线（tsx 在此挂钩） |
-| JSONC | 带注释 JSON（tsconfig 实为 JSONC，`node require` 直接解析会失败） |
-| tsbuildinfo / composite / incremental | tsc 增量状态 / 可引用工程 / 增量标记 |
-| source-build / tracked-prebuilt | 源码构建 / 跟踪预构建产物（README 组件目录字段） |
-| HMR | 热更新（这里为配置级 live reload） |
-| Gateway / WS mux | `packages/api/gateway` 的双向流式总线（`/api/remote.mux`） |
-| BootManifest / `__DSH_BOOT__` | 浏览器 load 的 client 装配蓝图 |
+| 术语                                  | 含义                                                                |
+| :------------------------------------ | :------------------------------------------------------------------ |
+| TS / tsc                              | TypeScript / 其编译器（`tsc -b` 为 build 模式）                   |
+| tsdown / rolldown                     | 打包器 / 其后端引擎（Rust）                                         |
+| vite                                  | 前端构建/开发服务器                                                 |
+| tsx                                   | TS 源码按需转译执行器（`node --import tsx/esm`）                  |
+| V8 / Node                             | JS 引擎 / 运行时（ESM loader → V8）                                |
+| cordis                                | DI 容器 + Fiber 生命周期                                            |
+| Fiber / inject / provide / effect     | 插件执行单元 / 依赖声明 / 服务提供 / 逆序清理                       |
+| profile / bundle / patch              | 装配层 / 可装配插件层 / 配置片段（整表替换）                        |
+| entry / loader / include / group      | 装配单元 / 加载器 / 注入 / 分面                                     |
+| ESM / CJS                             | 两种模块系统（本仓打包成 CJS/ESM 双面）                             |
+| ESM loader                            | Node 的模块加载管线（tsx 在此挂钩）                                 |
+| JSONC                                 | 带注释 JSON（tsconfig 实为 JSONC，`node require` 直接解析会失败） |
+| tsbuildinfo / composite / incremental | tsc 增量状态 / 可引用工程 / 增量标记                                |
+| source-build / tracked-prebuilt       | 源码构建 / 跟踪预构建产物（README 组件目录字段）                    |
+| HMR                                   | 热更新（这里为配置级 live reload）                                  |
+| Gateway / WS mux                      | `packages/api/gateway` 的双向流式总线（`/api/remote.mux`）      |
+| BootManifest /`__DSH_BOOT__`        | 浏览器 load 的 client 装配蓝图                                      |
 
 ---
+
 > 本文档完成一轮专家评审（agent / TypeScript / 前端 / 软件工程四视角）后，按评审意见修订；
 > 评审与修订记录归档于 `docs/dsh-analysis/dsh-build-analysis-review.md`。
